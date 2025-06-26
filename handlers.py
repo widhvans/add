@@ -8,7 +8,7 @@ import re
 from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
 from telethon.tl.custom.button import Button
-from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButtonRequestPhone # Ensure these are imported
+from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButtonRequestPhone # Import these here
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
@@ -36,98 +36,26 @@ def set_bot_client_for_modules(client):
 
 # --- Helper functions for this module (handlers.py) ---
 
-# Helper function for main bot user login flow (initiated by /login or shared contact)
-async def _handle_main_bot_user_login_contact_received(contact_obj, event_obj):
-    numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-    await event_obj.delete() # Delete the message with the phone number button or the contact message itself
-    
-    m = await event_obj.respond("Requesting OTP...", buttons=None) # Respond with a new message for OTP
+# This function is now removed, as the owner does not log in.
+# async def _handle_main_bot_user_login_contact_received(contact_obj, event_obj):
+#    ...
 
-    u=TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
-    
-    try:
-        await u.connect()
-        owner_data = db.get_user_data(event_obj.chat_id)
-        code_request = await u.send_code_request(contact_obj.phone_number)
-        
-        ld = {'phash':code_request.phone_code_hash,'sess':u.session.save(),'clen':code_request.type.length}
-        if owner_data:
-            # Update owner's login state
-            db.update_user_data(owner_data['chat_id'],{'$set':{'ph':contact_obj.phone_number,'login':json.dumps(ld)}})
-            await m.edit(strings['ask_code'], buttons=numpad, parse_mode='html', link_preview=False)
-        else:
-            await m.edit("Error: Could not find your user record. Please /start the bot again.")
-    except Exception as ex:
-        LOGGER.error(f"Main bot login failed: {ex}")
-        await m.edit(f"Error: {ex}")
-    finally:
-        if u.is_connected(): await u.disconnect()
-
-# Helper for main bot sign in (called from callback query, for OTP/password)
-async def sign_in_main_bot(e):
-    owner_data = db.get_user_data(e.chat_id)
-    login_data = json.loads(utils.get(owner_data,'login','{}'))
-    s = {}
-    
-    if not owner_data: await e.edit("Error: User data not found. Please /start again."); return False
-    
-    try:
-        if utils.get(owner_data,'logged_in'):
-            await e.edit(strings['already_logged_in'], buttons=None, parse_mode='html')
-            return True
-        
-        u = TelegramClient(StringSession(utils.get(login_data,'sess')), config.API_ID, config.API_HASH, **config.device_info)
-        await u.connect()
-        
-        password = utils.get(owner_data, 'password')
-        phone_number = utils.get(owner_data, 'ph')
-        
-        if utils.get(login_data,'code_ok') and utils.get(login_data,'pass_ok'):
-            await u.sign_in(password=password)
-        elif utils.get(login_data,'code_ok'):
-            await u.sign_in(phone=phone_number, code=utils.get(login_data, 'code'), phone_code_hash=utils.get(login_data,'phash'))
-        else:
-            return False
-        
-        s.update({'session':u.session.save(),'logged_in':True,'login':'{}'})
-        await e.edit(strings['LOGIN_SUCCESS_TEXT'], buttons=None, parse_mode='html')
-        await _bot_client_instance.send_message(e.chat_id, "Login successful! You can now use the bot's features.")
-    except SessionPasswordNeededError:
-        login_data['need_pass'] = True
-        await e.edit(strings['ask_pass'],buttons=None, parse_mode='html')
-        s['login'] = json.dumps(login_data)
-        return False
-    except (PhoneCodeInvalidError,PasswordHashInvalidError) as ex:
-        numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-        errk='code' if isinstance(ex,PhoneCodeInvalidError) else 'pass'
-        login_data.update({'code':'','code_ok':False} if errk=='code' else {'pass_ok':False})
-        
-        await e.edit(strings[f'{errk}_invalid'], parse_mode='html')
-        await asyncio.sleep(2)
-        await e.edit(strings[f'ask_{errk}'],buttons=numpad if errk=='code' else None, parse_mode='html', link_preview=False)
-        s['login'] = json.dumps(login_data)
-        return False
-    except Exception as ex:
-        LOGGER.error(f"Unexpected error during main bot login: {ex}")
-        await e.edit(f"Unexpected error: {ex}")
-        s['login'] = '{}'
-        return False
-    finally:
-        if s: db.update_user_data(owner_data['chat_id'], {'$set':s})
-        if u and u.is_connected(): await u.disconnect()
-    return utils.get(s,'logged_in',False)
+# This function is now removed, as the owner does not log in.
+# async def sign_in_main_bot(e):
+#    ...
 
 # Handler for "Add Account" menu option (for member adding accounts)
 async def handle_add_member_account_flow(e):
     uid = e.sender_id
     db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_phone"}})
     
-    # CRITICAL FIX FOR: ValueError: You cannot mix inline with normal buttons
-    # Change `one_time=True` to `is_single_use=True`
+    # CRITICAL FIX FOR: TypeError: ReplyKeyboardMarkup._init_() got an unexpected keyword argument 'is_single_use'
+    # Removed `is_single_use=True`
     request_phone_markup = ReplyKeyboardMarkup(
         [[KeyboardButtonRequestPhone(strings['share_phone_number_button'])]],
-        resize=True,
-        is_single_use=True # Corrected keyword
+        resize=True
+        # one_time is not a direct parameter for ReplyKeyboardMarkup, it's often handled by Telegram itself
+        # based on context or by explicitly hiding the keyboard after use.
     )
     # Send a new message with the reply keyboard for phone number
     await e.respond(strings['ADD_ACCOUNT_PROMPT'], buttons=request_phone_markup, parse_mode='html')
@@ -168,12 +96,12 @@ def register_all_handlers(bot_client_instance):
     @_bot_client_instance.on(events.NewMessage(pattern=r"/start", func=lambda e: e.is_private))
     async def start_command_handler(e):
         s = await e.get_sender()
-        if not db.get_user_data(s.id):
+        if not db.get_user_data(s.id): # Initialize user data if they are new
             db.users_db.insert_one({
                 "chat_id":s.id, "fn":s.first_name, "un":s.username,
                 "start_time":datetime.datetime.now(datetime.timezone.utc),
-                "logged_in": False, "state": None,
-                "is_banned_from_dl": False,
+                # No 'logged_in', 'session', 'login', 'ph', 'password' for owner anymore
+                "is_banned_from_dl": False, # Retain for general bot ban
                 "user_accounts": [],
                 "adding_tasks": []
             })
@@ -189,29 +117,14 @@ def register_all_handlers(bot_client_instance):
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/settings", func=lambda e: e.is_private))
     async def settings_command_handler(e):
-        owner_data = db.get_user_data(e.sender_id)
-        if not utils.get(owner_data, 'logged_in'):
-            await e.respond(strings['need_login'], parse_mode='html')
-        else:
-            await menus.send_settings_menu(e)
+        # Owner's settings menu is now always accessible, as they don't "log in"
+        await menus.send_settings_menu(e)
 
-    @_bot_client_instance.on(events.NewMessage(pattern=r"/login", func=lambda e: e.is_private))
-    async def login_command_handler(e):
-        owner_data = db.get_user_data(e.sender_id)
-        if utils.get(owner_data, 'logged_in'):
-            await e.respond(strings['already_logged_in'], parse_mode='html')
-        else:
-            # Send the phone request as a reply keyboard for the main login
-            await e.respond(strings['ask_phone_prompt'], buttons=ReplyKeyboardMarkup([[KeyboardButtonRequestPhone(strings['ask_phone_button'])]], resize=True, is_single_use=True), parse_mode='html')
+    # REMOVED: @bot_client_instance.on(events.NewMessage(pattern=r"/login", func=lambda e: e.is_private))
+    # Login command is removed as owner doesn't log in.
 
-
-    @_bot_client_instance.on(events.NewMessage(pattern=r"/logout", func=lambda e: e.is_private))
-    async def logout_command_handler(e):
-        owner_data = db.get_user_data(e.sender_id)
-        if not utils.get(owner_data, 'logged_in'):
-            await e.respond(strings['need_login'], parse_mode='html')
-        else:
-            await e.respond(strings['logout_sure'], buttons=menus.yesno('logout'), parse_mode='html')
+    # REMOVED: @bot_client_instance.on(events.NewMessage(pattern=r"/logout", func=lambda e: e.is_private))
+    # Logout command is removed as owner doesn't log out.
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/addaccount", func=lambda e: e.is_private))
     async def add_member_account_command_handler(e):
@@ -233,14 +146,13 @@ def register_all_handlers(bot_client_instance):
     @_bot_client_instance.on(events.NewMessage(pattern="/stats", from_users=config.OWNER_ID))
     async def stats_handler(e):
         total_bot_users = db.users_db.count_documents({});
-        logged_in_bot_users = db.users_db.count_documents({"logged_in": True});
+        # 'logged_in_bot_users' is no longer meaningful in this context
         
         total_member_accounts = sum(len(doc.get('user_accounts', [])) for doc in db.users_db.find({}))
         active_adding_tasks_count = len(members_adder.ACTIVE_ADDING_TASKS)
         
         st = (f"<b>Bot Statistics</b>\n\n"
               f"👤 <b>Total Bot Users:</b> <code>{total_bot_users}</code>\n"
-              f"✅ <b>Logged-in Bot Users:</b> <code>{logged_in_bot_users}</code>\n"
               f"👥 <b>Total Member Adding Accounts:</b> <code>{total_member_accounts}</code>\n"
               f"⚙️ <b>Active Adding Tasks:</b> <code>{active_adding_tasks_count}</code>"
         )
@@ -271,15 +183,21 @@ def register_all_handlers(bot_client_instance):
         owner_data = db.get_user_data(uid)
         state = utils.get(owner_data, 'state')
 
-        if e.contact.user_id == e.chat_id: # Main bot owner login via contact share
-            await _handle_main_bot_user_login_contact_received(e.contact, e)
-        
-        elif state and state.startswith(("awaiting_member_account_relogin_phone_", "awaiting_member_account_phone")):
+        # This `if` block for main bot owner login is now removed.
+        # `contact_handler` will only handle member-adding account phone submissions.
+        # if e.contact.user_id == e.chat_id: # Main bot owner login via contact share
+        #    ...
+
+        if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_phone")):
             account_id_match = re.search(r'_(\d+)$', state)
             account_id = int(account_id_match.group(1)) if account_id_match else None
             
             phone_number = e.contact.phone_number
             
+            # Hide the reply keyboard after receiving contact
+            await _bot_client_instance.send_message(e.chat_id, "Processing your request...", reply_markup=ReplyKeyboardMarkup([], selective=True, resize_keyboard=True)) # Hide keyboard
+            # Note: selective=True means hide only for this user, resize_keyboard=True to minimize height
+
             if state == "awaiting_member_account_phone" and any(acc.get('phone_number') == phone_number for acc in utils.get(owner_data, 'user_accounts', [])):
                 db.update_user_data(uid, {"$set": {"state": None}})
                 return await e.respond("This phone number is already added.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
@@ -325,7 +243,8 @@ def register_all_handlers(bot_client_instance):
                 db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_code_{account_id}"}})
                 
                 numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-                await e.respond(strings['ask_code'], buttons=numpad, parse_mode='html', link_preview=False)
+                # Send a NEW message for OTP, don't try to edit the one with the phone button
+                await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
 
             except Exception as ex:
                 LOGGER.error(f"Error during member account phone submission: {ex}")
@@ -336,6 +255,7 @@ def register_all_handlers(bot_client_instance):
             finally:
                 if client.is_connected(): await client.disconnect()
         else:
+            # If not in a specific account addition state, and user sent a contact, it's wrong.
             await e.respond(strings['wrong_phone'], parse_mode='html')
 
     @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and not e.text.startswith('/')))
@@ -349,10 +269,9 @@ def register_all_handlers(bot_client_instance):
         if state == "awaiting_broadcast_message":
             db.update_user_data(uid, {"$set": {"state": None}})
             asyncio.create_task(members_adder.run_user_broadcast(uid, e.message))
-        elif utils.get(json.loads(utils.get(owner_data, 'login', '{}')), 'need_pass'):
-            db.update_user_data(uid, {'$set': {'password': e.text}})
-            await e.delete()
-            await e.respond(f"{strings['ask_ok']}'<code>********</code>'", buttons=menus.yesno('pass'), parse_mode='html')
+        # Removed main bot login 2FA handling
+        # elif utils.get(json.loads(utils.get(owner_data, 'login', '{}')), 'need_pass'):
+        #    ...
         elif state and state.startswith("awaiting_member_account_code_"):
             account_id = int(state.split('_')[-1])
             account_info_doc = db.users_db.find_one({"chat_id": uid, "user_accounts.account_id": account_id})
@@ -383,15 +302,15 @@ def register_all_handlers(bot_client_instance):
                     }, "$unset": {"state": 1}}
                 )
                 members_adder.USER_CLIENTS[account_id] = client
-                await e.respond(strings['ACCOUNT_ADDED_SUCCESS'].format(phone_number=phone_number, account_id=account_id), parse_mode='html')
-                await menus.send_members_adding_menu(e, uid)
+                # Ask if they want to add another account
+                await e.respond(strings['ADD_ANOTHER_ACCOUNT_PROMPT'], buttons=menus.yesno(f"add_another_account_{account_id}"), parse_mode='html')
             except SessionPasswordNeededError:
                 db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}", "user_accounts.$.temp_login_data.need_pass": True}})
-                await e.respond(strings['ask_pass'], parse_mode='html')
+                await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
             except PhoneCodeInvalidError:
                 await e.respond(strings['code_invalid'], parse_mode='html')
                 numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-                await e.respond(strings['ask_code'], buttons=numpad, parse_mode='html', link_preview=False)
+                await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
             except Exception as ex:
                 LOGGER.error(f"Error during member account OTP submission: {ex}")
                 db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.logged_in": False, "user_accounts.$.is_active_for_adding": False, "user_accounts.$.temp_login_data": {}}})
@@ -428,11 +347,10 @@ def register_all_handlers(bot_client_instance):
                     }, "$unset": {"state": 1}}
                 )
                 members_adder.USER_CLIENTS[account_id] = client
-                await e.respond(strings['ACCOUNT_ADDED_SUCCESS'].format(phone_number=utils.get(account_info, 'phone_number'), account_id=account_id), parse_mode='html')
-                await menus.send_members_adding_menu(e, uid)
+                await e.respond(strings['ADD_ANOTHER_ACCOUNT_PROMPT'], buttons=menus.yesno(f"add_another_account_{account_id}"), parse_mode='html')
             except PasswordHashInvalidError:
                 await e.respond(strings['pass_invalid'], parse_mode='html')
-                await e.respond(strings['ask_pass'], parse_mode='html')
+                await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
             except Exception as ex:
                 LOGGER.error(f"Error during member account 2FA password submission: {ex}")
                 db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.logged_in": False, "user_accounts.$.is_active_for_adding": False, "user_accounts.$.temp_login_data": {}}})
@@ -441,6 +359,12 @@ def register_all_handlers(bot_client_instance):
             finally:
                 if client.is_connected() and not utils.get(account_info, 'logged_in'):
                     await client.disconnect()
+
+        else:
+            # If not in any special state, and it's not a command, it's an unhandled message
+            # This is where a general "I only do member adding. Use /help" message could go.
+            await e.respond("I'm a dedicated member adding bot! Please use the commands or buttons to interact with me. Use /help for more info.")
+
 
     @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and e.media))
     async def private_media_handler(e):
@@ -460,6 +384,9 @@ def register_all_handlers(bot_client_instance):
         elif state == "awaiting_broadcast_message":
             db.update_user_data(uid, {"$set": {"state": None}})
             asyncio.create_task(members_adder.run_user_broadcast(uid, e.message))
+        else:
+            await e.respond("I'm a dedicated member adding bot. I don't handle media messages outside of specific flows.")
+
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/empty", func=lambda e: e.is_private))
     async def empty_handler(e):
@@ -479,6 +406,19 @@ def register_all_handlers(bot_client_instance):
         uid = e.sender_id
         raw_data = e.data.decode()
         owner_data = db.get_user_data(uid)
+
+        # Handle 'add_another_account' callback
+        if raw_data.startswith("yes_add_another_account_"):
+            # The previous account was successfully added. Now initiate new add flow.
+            db.update_user_data(uid, {"$set": {"state": None}}) # Clear previous state
+            await handle_add_member_account_flow(e) # Restart the flow
+            return await e.answer("Initiating another account addition...", alert=True)
+        elif raw_data.startswith("no_add_another_account_"):
+            # User chose not to add another account
+            db.update_user_data(uid, {"$set": {"state": None}}) # Clear state
+            await e.edit("Okay, no more accounts for now. You can manage your accounts via /settings.", buttons=None)
+            await menus.send_members_adding_menu(e, uid) # Take them back to menu
+            return await e.answer("Okay!", alert=True)
 
         if raw_data.startswith("m_add_sc|"):
             try:
@@ -627,26 +567,8 @@ def register_all_handlers(bot_client_instance):
             elif action=="retry_fsub":
                 await e.delete()
                 if await menus.check_fsub(e):await e.respond("Thanks for joining! Please use /settings to manage member adding.")
-            elif action.startswith("yes_")or action.startswith("no_"):
-                ctx=action.split('_',1)[1]
-                if ctx=="logout":
-                    if action.startswith("yes_"):
-                        db.update_user_data(uid, {'$set':{'logged_in':False,'session':None,'login':'{}'}})
-                        await e.edit(strings['logged_out'], parse_mode='html')
-                    else:await e.edit(strings['not_logged_out'], parse_mode='html')
-                elif ctx in["code","pass"]:
-                    l=json.loads(utils.get(owner_data,'login','{}'))
-                    ip=ctx=="pass";ko="pass_ok"if ip else"code_ok"
-                    if action.startswith("yes_"):
-                        l[ko]=True;db.update_user_data(uid, {'$set':{'login':json.dumps(l)}});
-                        await sign_in_main_bot(e)
-                    else:
-                        l[ko]=False
-                        if ip:db.update_user_data(uid, {'$set':{'login':json.dumps(l),'password':''}});await e.edit(strings['ask_pass'], parse_mode='html')
-                        else:l['code']='';db.update_user_data(uid, {'$set':{'login':json.dumps(l)}});
-                        numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-                        await e.edit(strings['ask_code']+'\n<code>'+l.get('code','')+'</code>',buttons=numpad, parse_mode='html', link_preview=False)
-            
+            # Removed owner login/logout buttons from callback handler
+
             elif action == "members_adding_menu":
                 await menus.send_members_adding_menu(e, uid)
             elif action == "add_member_account":
@@ -752,23 +674,12 @@ def register_all_handlers(bot_client_instance):
                     if clen and len(code)==clen and not code_ok:
                         db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.temp_login_data.code_ok": True}})
                         await e.edit(f"{strings['ask_ok']}<code>{code}</code>",buttons=menus.yesno('code'), parse_mode='html')
-                    else: await e.edit(strings['ask_code']+'\n<code>'+code+'</code>',buttons=numpad, parse_mode='html', link_preview=False)
+                    else: await e.edit(strings['ASK_OTP_PROMPT']+'\n<code>'+code+'</code>',buttons=numpad, parse_mode='html', link_preview=False)
                 except MessageNotModifiedError: pass
                 finally: await e.answer()
 
-            else: # Default behavior for main bot login (if any)
-                l=json.loads(utils.get(owner_data,'login','{}'))
-                if isinstance(pr,int):l['code']=utils.get(l,'code','')+str(pr)
-                elif pr=="clear":l['code']=utils.get(l,'code','')[:-1]
-                elif pr=="clear_all":l['code']=''
-                db.update_user_data(uid, {'$set':{'login':json.dumps(l)}})
-                code,clen,code_ok=utils.get(l,'code',''),utils.get(l,'clen'),utils.get(l,'code_ok',False)
-                numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-                try:
-                    if clen and len(code)==clen and not code_ok: await e.edit(f"{strings['ask_ok']}<code>{code}</code>",buttons=menus.yesno('code'), parse_mode='html')
-                    elif'code'in l: await e.edit(strings['ask_code']+'\n<code>'+code+'</code>',buttons=numpad, parse_mode='html', link_preview=False)
-                except MessageNotModifiedError: pass
-                finally: await e.answer()
+            else: # Default behavior - now for general commands, NOT main bot login
+                await e.answer("Unknown input. Please use the menu buttons or commands.")
 
         except (json.JSONDecodeError, KeyError):
-            await e.answer()
+            await e.answer("An unknown error occurred.")
