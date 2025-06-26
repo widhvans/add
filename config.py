@@ -5,7 +5,7 @@ class AppConfig:
     API_ID = int(os.environ.get("API_ID", "10389378"))
     API_HASH = os.environ.get("API_HASH", "cdd5c820cb6abeecaef38e2bb8db4860")
     
-    BOT_TOKEN = os.environ.get("BOT_TOKEN", "7320891454:AAHp3AAIZK2RKIkWyYIByB_fSEq9Xuk9-bk")
+    BOT_TOKEN = os.environ.get("BOT_TOKEN", "7634067741:AAGQAa5mDY232XXDYE21Xnx3eAvLrHrbq-k")
     
     MONGODB_URL = os.environ.get("MONGODB_URL", "mongodb+srv://soniji:chaloji@cluster0.i5zy74f.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
     
