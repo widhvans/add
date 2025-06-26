@@ -46,41 +46,41 @@ async def send_main_menu(e): # Main menu for the bot's simplified interface
         [Button.inline("🚀 Let's Go!", data='{"action":"members_adding_menu"}')] # Direct to member adding menu
     ]
     try:
-        await e.edit(message=st, buttons=btns, link_preview=False, parse_mode='Markdown') # Use Markdown
+        await e.edit(message=st, buttons=btns, link_preview=False, parse_mode='Markdown')
     except Exception:
-        await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='Markdown') # Use Markdown
+        await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='Markdown')
 
 async def send_help_menu(e):
     try:
         await e.edit(strings['HELP_TEXT_FEATURES'],
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                         parse_mode='Markdown') # Use Markdown
+                         parse_mode='Markdown')
     except Exception:
         await e.respond(strings['HELP_TEXT_FEATURES'],
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                         parse_mode='Markdown') # Use Markdown
+                         parse_mode='Markdown')
 
 async def send_commands_menu(e):
     try:
         await e.edit(strings['COMMANDS_TEXT'],
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                         parse_mode='Markdown') # Use Markdown
+                         parse_mode='Markdown')
     except Exception:
         await e.respond(strings['COMMANDS_TEXT'],
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                         parse_mode='Markdown') # Use Markdown
+                         parse_mode='Markdown')
 
 async def send_settings_menu(e): # This is the main members adding dashboard now
     text = strings['SETTINGS_MENU_TEXT']
     buttons = [
-        [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')], # This is a placeholder for the menu title
+        [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')],
         [Button.inline("📣 Broadcast", data='{"action":"user_broadcast"}')],
         [Button.inline("« Back to Main", data='{"action":"main_menu"}')]
     ]
     try:
-        await e.edit(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.edit(text, buttons=buttons, parse_mode='Markdown')
     except Exception:
-        await e.respond(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
 
 async def send_members_adding_menu(e, uid):
@@ -94,18 +94,38 @@ async def send_members_adding_menu(e, uid):
         [Button.inline("« Back", data='{"action":"main_menu"}')] # Back to main menu
     ]
     try:
-        await e.edit(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.edit(text, buttons=buttons, parse_mode='Markdown')
     except Exception:
-        await e.respond(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
 async def display_member_accounts(e, uid):
     owner_data = db.get_user_data(uid)
     accounts = utils.get(owner_data, 'user_accounts', [])
-    if not accounts:
+
+    # CRITICAL FIX: Auto-remove invalid/unsuccessful accounts from the DB
+    valid_accounts = []
+    accounts_to_remove_ids = []
+    for account in accounts:
+        if utils.get(account, 'logged_in') and utils.get(account, 'session_string'):
+            valid_accounts.append(account)
+        else:
+            accounts_to_remove_ids.append(utils.get(account, 'account_id'))
+    
+    if accounts_to_remove_ids:
+        db.users_db.update_one(
+            {"chat_id": uid},
+            {"$pull": {"user_accounts": {"account_id": {"$in": accounts_to_remove_ids}}}}
+        )
+        # Refresh accounts list after removal
+        owner_data = db.get_user_data(uid)
+        accounts = utils.get(owner_data, 'user_accounts', [])
+
+
+    if not accounts: # Check again after cleanup
         try:
-            return await e.edit(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='Markdown') # Use Markdown
+            return await e.edit(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='Markdown')
         except Exception:
-            return await e.respond(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='Markdown') # Use Markdown
+            return await e.respond(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='Markdown')
 
     text = strings['MY_ACCOUNTS_HEADER']
     buttons = []
@@ -124,7 +144,7 @@ async def display_member_accounts(e, uid):
             elif utils.get(account, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS:
                 status = strings['ACCOUNT_STATUS_SUSPENDED'].format(reason="Too many errors")
         else:
-            status = strings['ACCOUNT_STATUS_INVALID']
+            status = strings['ACCOUNT_STATUS_INVALID'] # Should ideally be caught by cleanup above if session_string is None
 
         daily_adds = utils.get(account, 'daily_adds_count', 0)
         soft_errors = utils.get(account, 'soft_error_count', 0)
@@ -142,9 +162,9 @@ async def display_member_accounts(e, uid):
     
     buttons.append([Button.inline("« Back", data='{"action":"members_adding_menu"}')])
     try:
-        await e.edit(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.edit(text, buttons=buttons, parse_mode='Markdown')
     except Exception:
-        await e.respond(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
 async def send_member_account_details(e, uid, account_id):
     owner_data = db.get_user_data(uid)
@@ -178,9 +198,9 @@ async def send_member_account_details(e, uid, account_id):
         [Button.inline("« Back", data='{"action":"manage_member_accounts"}')]
     ]
     try:
-        await e.edit(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.edit(text, buttons=buttons, parse_mode='Markdown')
     except Exception:
-        await e.respond(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
 
 async def send_create_adding_task_menu(e, uid):
@@ -202,6 +222,7 @@ async def send_create_adding_task_menu(e, uid):
         "added_members_count": 0,
         "last_progress_message_id": None
     }
+    # For now, we still push the draft. Cleanup happens in manage_tasks.
     db.update_user_data(uid, {"$push": {"adding_tasks": new_task}})
     
     await send_adding_task_details_menu(e, uid, next_task_id)
@@ -211,31 +232,40 @@ async def send_manage_adding_tasks_menu(e, uid):
     owner_data = db.get_user_data(uid)
     tasks = utils.get(owner_data, 'adding_tasks', [])
     
-    # CRITICAL FIX: Only show tasks that are configured.
-    # A task is "configured" if it has at least a source, target, OR assigned accounts.
-    # This avoids displaying empty "Draft" tasks that were just created.
-    # However, if there are NO configured tasks at all, we should still show *all* tasks
-    # so the user has something to interact with (e.g., their newly created draft).
+    # CRITICAL FIX: Auto-remove empty draft tasks
+    # A task is "empty" if it has no source, no targets, AND no assigned accounts.
+    tasks_to_keep = []
+    tasks_to_remove_ids = []
+    for task in tasks:
+        if not utils.get(task, 'source_chat_id') and \
+           not utils.get(task, 'target_chat_ids') and \
+           not utils.get(task, 'assigned_accounts'):
+            tasks_to_remove_ids.append(utils.get(task, 'task_id'))
+        else:
+            tasks_to_keep.append(task)
     
-    configured_tasks = [t for t in tasks if utils.get(t, 'source_chat_id') or utils.get(t, 'target_chat_ids') or utils.get(t, 'assigned_accounts')]
-    
-    if not configured_tasks and tasks: # If some tasks exist but none are configured yet, display all.
-        display_tasks = tasks
-    else: # Otherwise, only display configured tasks.
-        display_tasks = configured_tasks
+    if tasks_to_remove_ids:
+        # Perform the pull operation to remove empty drafts
+        db.users_db.update_one(
+            {"chat_id": uid},
+            {"$pull": {"adding_tasks": {"task_id": {"$in": tasks_to_remove_ids}}}}
+        )
+        # Update `tasks` variable for current display based on what's left
+        owner_data = db.get_user_data(uid)
+        tasks = utils.get(owner_data, 'adding_tasks', []) # Re-fetch after cleanup
 
-    if not display_tasks:
+    if not tasks: # After cleanup, if there are still no tasks (or all were empty drafts)
         text = "You have no configured adding tasks yet. Use '➕ Create Task' to add and configure one."
         buttons = [[Button.inline("« Back", data='{"action":"members_adding_menu"}')]]
         try:
-            return await e.edit(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+            return await e.edit(text, buttons=buttons, parse_mode='Markdown')
         except Exception:
-            return await e.respond(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+            return await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
-    text = strings['MANAGE_TASKS_HEADER'] # This header is now used only when displaying actual tasks
+    text = strings['MANAGE_TASKS_HEADER']
     buttons = []
     import members_adder 
-    for task in display_tasks:
+    for task in tasks: # Now iterate over the potentially cleaned up list of tasks
         task_id = utils.get(task, 'task_id', 'N/A')
         status = utils.get(task, 'status', 'draft')
         
@@ -265,9 +295,9 @@ async def send_manage_adding_tasks_menu(e, uid):
 
     buttons.append([Button.inline("« Back", data='{"action":"members_adding_menu"}')])
     try:
-        await e.edit(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.edit(text, buttons=buttons, parse_mode='Markdown')
     except Exception:
-        await e.respond(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
 async def send_adding_task_details_menu(e, uid, task_id):
     owner_data = db.get_user_data(uid)
@@ -280,19 +310,19 @@ async def send_adding_task_details_menu(e, uid, task_id):
     import members_adder 
     if utils.get(task, 'source_chat_id'):
         try: source_chat_info = await members_adder.get_chat_title(bot_client, task['source_chat_id'])
-        except: source_chat_info = f"ID: `{task['source_chat_id']}`" # Use Markdown for code block
+        except: source_chat_info = f"ID: `{task['source_chat_id']}`"
     
     target_chat_titles = []
     for chat_id in utils.get(task, 'target_chat_ids', []):
         try: target_chat_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
-        except: target_chat_titles.append(f"ID: `{chat_id}`") # Use Markdown for code block
+        except: target_chat_titles.append(f"ID: `{chat_id}`")
     target_chat_info = ", ".join(target_chat_titles) if target_chat_titles else "Not Set"
 
     assigned_accounts_info = []
     for acc_id in utils.get(task, 'assigned_accounts', []):
         acc_info = db.find_user_account_in_owner_doc(uid, acc_id)
         if acc_info:
-            assigned_accounts_info.append(f"`{utils.get(acc_info, 'phone_number', f'ID: {acc_id}')}`") # Use Markdown for code block
+            assigned_accounts_info.append(f"`{utils.get(acc_info, 'phone_number', f'ID: {acc_id}')}`")
     assigned_accounts_display = ", ".join(assigned_accounts_info) if assigned_accounts_info else "None"
 
     total_added_members = utils.get(task, 'added_members_count', 0)
@@ -315,16 +345,16 @@ async def send_adding_task_details_menu(e, uid, task_id):
     if utils.get(task, 'status') == 'active':
         buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
     elif utils.get(task, 'status') == 'paused' or utils.get(task, 'status') == 'draft' or utils.get(task, 'status') == 'completed':
-        if utils.get(task, 'source_chat_id') and utils.get(task, 'target_chat_ids') and utils.get(task, 'assigned_accounts'):
+        if utils.get(task, 'source_chat_id') or utils.get(task, 'target_chat_ids') or utils.get(task, 'assigned_accounts'): # Only allow start if some config is done
             buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
     
     buttons.append([Button.inline("🗑️ Delete Task", f'{{"action":"confirm_delete_adding_task","task_id":{task_id}}}')])
     buttons.append([Button.inline("« Back", data='{"action":"manage_adding_tasks"}')])
     
     try:
-        await e.edit(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.edit(text, buttons=buttons, parse_mode='Markdown')
     except Exception:
-        await e.respond(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
 async def send_assign_accounts_menu(e, uid, task_id):
     owner_data = db.get_user_data(uid)
@@ -349,20 +379,16 @@ async def send_assign_accounts_menu(e, uid, task_id):
     buttons.append([Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
 
     try:
-        await e.edit(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.edit(text, buttons=buttons, parse_mode='Markdown')
     except Exception:
-        await e.respond(text, buttons=buttons, parse_mode='Markdown') # Use Markdown
+        await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
 async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
     owner_data = db.get_user_data(uid)
     
-    # Use config.device_info for TelegramClient in menus.py when fetching dialogs
-    # This might require passing config from bot.py to menus.py, which is already done.
-    
     temp_msg = await e.respond("Fetching your chats, please wait...")
     
     try:
-        # Use the main bot client to fetch dialogs from the owner's perspective
         all_dialogs = await bot_client.get_dialogs(limit=None)
         
         dialogs = [d for d in all_dialogs if not (d.is_user and d.entity.is_self)]
@@ -417,11 +443,10 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
         
         prompt = strings['SELECT_SOURCE_CHAT'] if selection_type == 'from' else strings['SELECT_TARGET_CHAT']
         
-        await temp_msg.edit(prompt.format(task_id=task_id), buttons=buttons, parse_mode='Markdown') # Use Markdown
-
+        await temp_msg.edit(prompt.format(task_id=task_id), buttons=buttons, parse_mode='Markdown')
     except Exception as ex:
         # LOGGER.error(f"Chat selection error for {uid}: {ex}") # Add logging here
         back_action = f'{{"action":"m_add_task_menu", "task_id":{task_id}}}'
-        await temp_msg.edit("Could not fetch chats. Please try again.", buttons=[[Button.inline("« Back", back_action)]], parse_mode='Markdown') # Use Markdown
+        await temp_msg.edit("Could not fetch chats. Please try again.", buttons=[[Button.inline("« Back", back_action)]], parse_mode='Markdown')
     finally:
         pass
