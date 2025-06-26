@@ -43,9 +43,15 @@ def set_bot_client_for_modules(client):
 # Helper function for "Add Account" menu option (for member adding accounts)
 async def handle_add_member_account_flow(e):
     uid = e.sender_id
+    # Clean up any pending login sessions for this user before starting a new one
+    if uid in ONGOING_LOGIN_CLIENTS:
+        client_to_clean = ONGOING_LOGIN_CLIENTS.pop(uid)
+        if client_to_clean.is_connected():
+            await client_to_clean.disconnect()
+            LOGGER.info(f"Cleaned up stale login client for user {uid}")
+    
     db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_number"}})
     
-    # No more "share phone number" button. Directly ask for numbers.
     await e.respond(strings['ADD_ACCOUNT_NUMBER_PROMPT'], parse_mode='Markdown')
 
 
@@ -101,7 +107,6 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
             await client.sign_in(password=password)
 
         # Login successful if no exception
-        # CRITICAL FIX: Save permanent data ONLY NOW.
         db.update_user_account_in_owner_doc(
             uid, account_id,
             {"$set": {
@@ -725,28 +730,8 @@ def register_all_handlers(bot_client_instance):
             
             if state and (state.startswith("awaiting_member_account_code_") or state.startswith("awaiting_member_account_relogin_code_")):
                 account_id = int(state.split('_')[-1])
-                account_info = db.find_user_account_in_owner_doc(uid, account_id)
-                if not account_info or not utils.get(account_info, 'temp_login_data'):
-                    return await e.answer("Invalid state for OTP. Please try again.", alert=True)
-                
-                temp_login_data = utils.get(account_info, 'temp_login_data')
-                code = utils.get(temp_login_data, 'code', '')
-                if isinstance(pr,int): code += str(pr)
-                elif pr=="clear": code = code[:-1]
-                elif pr=="clear_all": code = ''
-                
-                db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.temp_login_data.code": code}})
-                
-                clen, code_ok = utils.get(temp_login_data, 'clen'), utils.get(temp_login_data, 'code_ok', False)
-                numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-                try:
-                    if clen and len(code)==clen and not code_ok:
-                        db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.temp_login_data.code_ok": True}})
-                        await e.edit(f"{strings['ask_ok']}<code>{code}</code>",buttons=menus.yesno('code'), parse_mode='html')
-                    else: await e.edit(strings['ASK_OTP_PROMPT']+'\n<code>'+code+'</code>',buttons=numpad, parse_mode='html', link_preview=False)
-                except MessageNotModifiedError: pass
-                finally: await e.answer()
-
+                # No numpad, so this branch is likely not taken for button presses
+                await e.answer("Please send the OTP directly as a message.")
             else:
                 await e.answer("Unknown input. Please use the menu buttons or commands.")
 
