@@ -84,10 +84,17 @@ async def send_settings_menu(e):
 
 
 async def send_members_adding_menu(e, uid):
+    owner_data = db.get_user_data(uid)
+    num_accounts = len([acc for acc in utils.get(owner_data, 'user_accounts', []) if utils.get(acc, 'logged_in')])
+
+    add_account_button_text = strings['BUTTON_ADD_ACCOUNT']
+    if num_accounts > 0:
+        add_account_button_text = strings['BUTTON_ADD_MORE_ACCOUNT']
+
     text = "👥 **Members Adding Bot Settings**\n\n" \
            "Here you can manage your accounts for adding members and set up adding tasks."
     buttons = [
-        [Button.inline("➕ Add Account", data='{"action":"add_member_account"}')],
+        [Button.inline(add_account_button_text, data='{"action":"add_member_account"}')], # Dynamic text
         [Button.inline("📝 Manage Accounts", data='{"action":"manage_member_accounts"}')],
         [Button.inline("➕ Create Task", data='{"action":"create_adding_task"}')],
         [Button.inline("⚙️ Manage Tasks", data='{"action":"manage_adding_tasks"}')],
@@ -212,13 +219,12 @@ async def send_create_adding_task_menu(e, uid):
         "is_active": False,
         "status": "draft",
         "source_chat_id": None,
-        "target_chat_ids": [],
+        "target_chat_ids": [], # List of source chats (multiple allowed)
         "assigned_accounts": [],
         "current_member_index": 0,
         "added_members_count": 0,
         "last_progress_message_id": None
     }
-    # For now, we still push the draft. Cleanup happens in manage_tasks.
     db.update_user_data(uid, {"$push": {"adding_tasks": new_task}})
     
     await send_adding_task_details_menu(e, uid, next_task_id)
@@ -262,24 +268,29 @@ async def send_manage_adding_tasks_menu(e, uid):
         
         status_text = strings[f'TASK_STATUS_{status.upper()}']
         
-        source_chat_title = "Not Set"
-        if utils.get(task, 'source_chat_id'):
-            try: source_chat_title = await members_adder.get_chat_title(bot_client, task['source_chat_id'])
-            except: pass
-        
-        target_chat_titles = []
-        for chat_id in utils.get(task, 'target_chat_ids', []):
-            try: target_chat_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
-            except: pass
-        target_chat_info = ", ".join(target_chat_titles) if target_chat_titles else "Not Set"
+        source_chat_info_display = "Not Set"
+        source_chat_ids = utils.get(task, 'source_chat_ids', []) # It's now a list
+        if source_chat_ids:
+            source_titles = []
+            for chat_id in source_chat_ids:
+                try: source_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
+                except: source_titles.append(f"ID: `{chat_id}`")
+            source_chat_info_display = ", ".join(source_titles) if source_titles else "Not Set"
+
+        target_chat_info_display = "Not Set"
+        target_chat_id = utils.get(task, 'target_chat_id') # It's now a single ID
+        if target_chat_id:
+            try: target_chat_info_display = await members_adder.get_chat_title(bot_client, target_chat_id)
+            except: target_chat_info_display = f"ID: `{target_chat_id}`"
+
 
         num_accounts = len(utils.get(task, 'assigned_accounts', []))
 
         text += strings['TASK_ENTRY_INFO'].format(
             task_id=task_id,
             status=status_text,
-            source_chat_title=source_chat_title,
-            target_chat_titles=target_chat_info,
+            source_chat_title=source_chat_info_display, # Changed from source_chat_title
+            target_chat_titles=target_chat_info_display, # Changed from target_chat_titles
             num_accounts=num_accounts
         ) + "\n"
         buttons.append([Button.inline(f"Task {task_id} - {status_text}", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')])
@@ -297,17 +308,22 @@ async def send_adding_task_details_menu(e, uid, task_id):
 
     status_text = strings[f'TASK_STATUS_{utils.get(task, "status", "draft").upper()}']
 
-    source_chat_info = "Not Set"
-    import members_adder 
-    if utils.get(task, 'source_chat_id'):
-        try: source_chat_info = await members_adder.get_chat_title(bot_client, task['source_chat_id'])
-        except: source_chat_info = f"ID: `{task['source_chat_id']}`"
-    
-    target_chat_titles = []
-    for chat_id in utils.get(task, 'target_chat_ids', []):
-        try: target_chat_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
-        except: target_chat_titles.append(f"ID: `{chat_id}`")
-    target_chat_info = ", ".join(target_chat_titles) if target_chat_titles else "Not Set"
+    # Display source chats (multiple)
+    source_chat_info_display = "Not Set"
+    source_chat_ids = utils.get(task, 'source_chat_ids', [])
+    if source_chat_ids:
+        source_titles = []
+        for chat_id in source_chat_ids:
+            try: source_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
+            except: source_titles.append(f"ID: `{chat_id}`")
+        source_chat_info_display = "\n".join(source_titles) if source_titles else "Not Set" # Display as list
+
+    # Display target chat (single)
+    target_chat_info_display = "Not Set"
+    target_chat_id = utils.get(task, 'target_chat_id')
+    if target_chat_id:
+        try: target_chat_info_display = await members_adder.get_chat_title(bot_client, target_chat_id)
+        except: target_chat_info_display = f"ID: `{target_chat_id}`"
 
     assigned_accounts_info = []
     for acc_id in utils.get(task, 'assigned_accounts', []):
@@ -321,22 +337,23 @@ async def send_adding_task_details_menu(e, uid, task_id):
     text = strings['TASK_DETAILS_HEADER'].format(
         task_id=task_id,
         status=status_text,
-        source_chat_info=source_chat_info,
-        target_chat_info=target_chat_info,
+        source_chat_info=source_chat_info_display, # Updated variable name
+        target_chat_info=target_chat_info_display, # Updated variable name
         assigned_accounts_info=assigned_accounts_display,
         total_added=total_added_members
     )
 
     buttons = [
-        [Button.inline("📤 Set Source Chat", f'{{"action":"set_task_source_chat","task_id":{task_id}}}')], # Changed action to trigger new input flow
-        [Button.inline("📥 Set Target Chat", f'{{"action":"set_task_target_chat","task_id":{task_id}}}')], # Changed action and removed (s)
+        [Button.inline("📤 Set Source Chat(s)", f'{{"action":"set_task_source_chat","task_id":{task_id}}}')], # Clarified (s)
+        [Button.inline("📥 Set Target Chat", f'{{"action":"set_task_target_chat","task_id":{task_id}}}')],
         [Button.inline("👥 Assign Accounts", f'{{"action":"assign_accounts_to_task","task_id":{task_id}}}')]
     ]
     
+    # Only allow starting if source, target, AND accounts are ALL set
     if utils.get(task, 'status') == 'active':
         buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
     elif utils.get(task, 'status') == 'paused' or utils.get(task, 'status') == 'draft' or utils.get(task, 'status') == 'completed':
-        if utils.get(task, 'source_chat_id') and utils.get(task, 'target_chat_ids') and utils.get(task, 'assigned_accounts'): # Only allow start if all config is done
+        if utils.get(task, 'source_chat_ids') and utils.get(task, 'target_chat_id') and utils.get(task, 'assigned_accounts'):
             buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
     
     buttons.append([Button.inline("🗑️ Delete Task", f'{{"action":"confirm_delete_adding_task","task_id":{task_id}}}')])
@@ -376,7 +393,7 @@ async def send_assign_accounts_menu(e, uid, task_id):
 
 # send_chat_selection_menu is now modified to handle direct ID/username input.
 # It will no longer offer an interactive list of chats for selection.
-async def send_chat_selection_menu(e, uid, selection_type, task_id): # Removed page parameter
+async def send_chat_selection_menu(e, uid, selection_type, task_id): # Removed page parameter from this function signature
     prompt_key = ""
     if selection_type == 'from':
         prompt_key = 'ASK_SOURCE_CHAT_ID'
