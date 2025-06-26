@@ -1,7 +1,7 @@
 # config.py
 import os
 
-class Config:
+class AppConfig: # Renamed the class to avoid potential name collision with the module 'config'
     # Telegram API credentials (Get these from my.telegram.org)
     API_ID = int(os.environ.get("API_ID", "10389378"))
     API_HASH = os.environ.get("API_HASH", "cdd5c820cb6abeecaef38e2bb8db4860")
@@ -47,5 +47,6 @@ class Config:
     # Cooldown for bot owner commands (e.g., if you had a /download feature, time between downloads)
     USER_COOLDOWN_SECONDS = int(os.environ.get("USER_COOLDOWN_SECONDS", 1)) 
 
-# Create an instance of the Config class to make its attributes accessible
-config = Config()
+# Create a global instance of the AppConfig class
+# This is the object that other modules will import and use.
+config = AppConfig()
