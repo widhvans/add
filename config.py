@@ -1,7 +1,7 @@
 import os
 
 class Config:
-    API_ID = int(os.environ.get("API_ID", "YOUR_API_ID"))
+    API_ID = int(os.environ.get("API_ID", "7320891454:AAHp3AAIZK2RKIkWyYIByB_fSEq9Xuk9-bk"))
     API_HASH = os.environ.get("API_HASH", "YOUR_API_HASH")
     BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
     MONGODB_URL = os.environ.get("MONGODB_URL", "YOUR_MONGODB_URL")
