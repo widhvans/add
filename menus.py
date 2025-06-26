@@ -17,29 +17,7 @@ def set_bot_client(client):
 def yesno(c):
     return [[Button.inline("Yes", f'{{"action":"yes_{c}"}}')], [Button.inline("No", f'{{"action":"no_{c}"}}')]]
 
-# New: Function to generate OTP Numpad with Confirm button
-def generate_otp_numpad(current_code):
-    numpad = []
-    # Digit buttons 1-9
-    for j in range(1, 10, 3):
-        row = []
-        for i in range(j, j + 3):
-            row.append(Button.inline(str(i), f'{{"press":{i}}}'))
-        numpad.append(row)
-    
-    # Bottom row: Clear All, 0, Backspace
-    bottom_row = [
-        Button.inline("Clear All", '{"press":"clear_all"}'),
-        Button.inline("0", '{"press":0}'),
-        Button.inline("⌫", '{"press":"clear"}')
-    ]
-    numpad.append(bottom_row)
-
-    # Confirm button (added as a separate row)
-    numpad.append([Button.inline(strings['NUMPAD_CONFIRM_BUTTON'], '{"press":"confirm_otp"}')])
-    
-    return numpad
-
+# Removed: generate_otp_numpad function as numpad is no longer used for OTP input
 
 async def check_fsub(e):
     if not config.FORCE_SUB_CHANNEL or e.sender_id == config.OWNER_ID:
@@ -129,7 +107,7 @@ async def display_member_accounts(e, uid):
     # CRITICAL FIX: Auto-remove invalid/unsuccessful accounts from the DB
     accounts_to_remove_ids = []
     for account in accounts:
-        # An account is invalid if it's not logged in AND has no session_string (meaning login failed or expired)
+        # An account is invalid if it's not logged in AND doesn't have a session_string (meaning login failed or expired)
         if not utils.get(account, 'logged_in') and not utils.get(account, 'session_string'):
             accounts_to_remove_ids.append(utils.get(account, 'account_id'))
     
@@ -442,7 +420,7 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
             nav_row.append(Button.inline("◀️ Prev", prev_callback))
         
         if total_pages > 0:
-            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop'))
+            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop')) # Corrected closing quote here
 
         if page < total_pages:
             next_callback = f'm_add_set|{selection_type}|{task_id}|{page+1}'
