@@ -420,7 +420,7 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
             nav_row.append(Button.inline("◀️ Prev", prev_callback))
         
         if total_pages > 0:
-            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop')) # Corrected closing quote here
+            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop'))
 
         if page < total_pages:
             next_callback = f'm_add_set|{selection_type}|{task_id}|{page+1}'
