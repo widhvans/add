@@ -34,40 +34,47 @@ def get_user_data(user_id):
     return users_db.find_one({"chat_id": user_id})
 
 def update_user_data(user_id, update_query):
-    # This function is used for top-level updates on the user document (e.g., 'state', pushing/pulling user_accounts)
     return users_db.update_one({"chat_id": user_id}, update_query)
 
 def find_user_account_in_owner_doc(owner_id, account_id):
-    owner_data = users_db.find_one({"chat_id": owner_id})
-    if owner_data:
-        return next((acc for acc in owner_data.get('user_accounts', []) if acc.get('account_id') == account_id), None)
+    owner_data = users_db.find_one(
+        {"chat_id": owner_id, "user_accounts.account_id": account_id}, # Filter to find the owner and the specific account
+        {"user_accounts.$": 1} # Project only the matching account
+    )
+    if owner_data and 'user_accounts' in owner_data and owner_data['user_accounts']:
+        return owner_data['user_accounts'][0] # Return the found account
     return None
 
-# CRITICAL FIX: Modified update_user_account_in_owner_doc to correctly use arrayFilters
+# CRITICAL FIX: Modified update_user_account_in_owner_doc to use arrayFilters
 def update_user_account_in_owner_doc(owner_id, account_id, update_fields_dict):
     """
     Updates specific fields of a user account within the 'user_accounts' array
-    for a given owner, using arrayFilters for precise targeting.
+    for a given owner, using arrayFilters ($[elem]) for precise targeting.
     
-    update_fields_dict should be a dictionary like:
-    {"user_accounts.$[account].logged_in": True, "user_accounts.$[account].temp_login_data": {}}
+    owner_id: The chat_id of the bot owner.
+    account_id: The unique account_id of the specific member-adding account within user_accounts.
+    update_fields_dict: A dictionary of fields to update, e.g., {'logged_in': True, 'session_string': '...'}.
+                        The keys should be the field names within the 'user_accounts' sub-document.
     """
+    set_operations = {}
+    unset_operations = {}
     
-    # We construct the update query with the positional filtered operator "$[account]"
-    # and provide the arrayFilters to specify which 'account' element to apply it to.
-    
-    # Example: update_fields_dict = {
-    #   "user_accounts.$[account].session_string": "new_session",
-    #   "user_accounts.$[account].logged_in": True
-    # }
-    
-    # array_filters defines which element is referred to by '$[account]'
-    array_filters = [{"account.account_id": account_id}]
+    for key, value in update_fields_dict.items():
+        if value is None: # Use $unset for None values to remove fields if needed
+            unset_operations[f"user_accounts.$[elem].{key}"] = ""
+        else:
+            set_operations[f"user_accounts.$[elem].{key}"] = value
+
+    update_query = {}
+    if set_operations:
+        update_query["$set"] = set_operations
+    if unset_operations:
+        update_query["$unset"] = unset_operations
 
     return users_db.update_one(
-        {"chat_id": owner_id}, # Main filter to find the owner's document
-        {"$set": update_fields_dict}, # Use $set with the positional filtered operator
-        array_filters=array_filters # Specify the filter for the array element
+        {"chat_id": owner_id},
+        update_query,
+        array_filters=[{"elem.account_id": account_id}] # Target the specific element in the array
     )
 
 
@@ -78,7 +85,4 @@ def get_task_in_owner_doc(owner_id, task_id):
     return None
 
 def update_task_in_owner_doc(owner_id, task_id, update_query):
-    # This also needs to be updated to use arrayFilters if updating nested fields in 'adding_tasks' array
-    # For now, it might be fine if it only updates top-level task fields or uses $set for a known element.
-    # If you encounter similar errors with tasks, modify this function too.
     return users_db.update_one({"chat_id": owner_id, "adding_tasks.task_id": task_id}, update_query)
