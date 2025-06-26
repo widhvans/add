@@ -12,7 +12,7 @@ import members_adder
 # Configure logging to output to console and file for robust tracking
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO, # Set to INFO to see general bot activity, DEBUG for more detailed messages
+    level=logging.INFO, # Set to INFO for general activity, DEBUG for more detailed messages
     handlers=[
         logging.StreamHandler(), # Output to console
         logging.FileHandler('bot.log', mode='a') # Output to a file named bot.log
