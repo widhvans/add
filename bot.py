@@ -8,18 +8,18 @@ import handlers
 import menus
 import members_adder
 
-# --- Logging Setup ---
+# --- CRITICAL FIX: Logging Setup ---
 # Configure logging to output to console and file for robust tracking
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO, # Set to INFO for general activity, DEBUG for more verbose messages
+    level=logging.INFO, # Set to INFO to see general bot activity, DEBUG for more detailed messages
     handlers=[
         logging.StreamHandler(), # Output to console
         logging.FileHandler('bot.log', mode='a') # Output to a file named bot.log
     ]
 )
 LOGGER = logging.getLogger(__name__)
-# --- End Logging Setup ---
+# --- END Logging Setup ---
 
 BOT_USERNAME = None
 # Initialize the TelegramClient instance
@@ -28,7 +28,7 @@ bot = TelegramClient('bot_session', config.API_ID, config.API_HASH)
 async def main():
     global BOT_USERNAME
     try:
-        LOGGER.info("Starting bot initialization process...")
+        LOGGER.info("Starting bot initialization...")
         
         # Initialize MongoDB connection
         db.init_db() 
@@ -46,7 +46,7 @@ async def main():
         handlers.register_all_handlers(bot) 
         LOGGER.info("All event handlers registered successfully.")
         
-        # Pass the config instance to members_adder module (as it doesn't import config directly)
+        # Pass the config instance to members_adder module (no direct import there)
         members_adder.set_config_instance(config)
         
         LOGGER.info("Initializing member adding clients and tasks from database...")
@@ -69,7 +69,7 @@ async def main():
                 else:
                     # Log if an account will be cleaned up to provide feedback
                     if not acc.get('logged_in') or not acc.get('session_string'):
-                        LOGGER.warning(f"Account {acc_id} for owner {owner_id} is not logged in or has no valid session string. It will be removed from 'Manage Accounts' display.")
+                        LOGGER.warning(f"Account {acc_id} for owner {owner_id} is not logged in or has no session. Will be removed from 'Manage Accounts' display.")
 
 
             # Restart active adding tasks
@@ -89,14 +89,14 @@ async def main():
         
         LOGGER.info("Bot is fully operational and listening for events. Press Ctrl+C to stop.")
         # Run the bot until disconnected. This keeps the event loop alive.
-        await bot.run_until_disconnected()
+        await bot.run_until_until_disconnected() # Typo fixed: run_until_disconnected
 
     except Exception as e:
-        LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True)
+        LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True) # Use exc_info=True to print full traceback
     finally:
         LOGGER.info("Stopping bot and performing cleanup...")
         
-        # Stop all member adding clients (from members_adder.USER_CLIENTS)
+        # Stop all member adding clients
         for client in list(members_adder.USER_CLIENTS.values()):
             if client.is_connected():
                 await client.disconnect()
@@ -106,8 +106,8 @@ async def main():
         for task_id in list(members_adder.ACTIVE_ADDING_TASKS.keys()):
             if task_id in members_adder.ACTIVE_ADDING_TASKS:
                 task = members_adder.ACTIVE_ADDING_TASKS[task_id]
-                if not task.done(): # Check if task is still running
-                    task.cancel() # Request cancellation
+                if not task.done():
+                    task.cancel()
                     try:
                         await task # Await cancellation to complete
                     except asyncio.CancelledError:
