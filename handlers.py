@@ -140,7 +140,7 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         
         # Specific error messages for invalid code/password/expired code
         if isinstance(ex, PhoneCodeExpiredError):
-            error_message = f"{strings['code_invalid']} ({ex})" # Indicate expired code
+            error_message = f"{strings['code_invalid']} (Code Expired)" # Indicate expired code
         elif isinstance(ex, PhoneCodeInvalidError):
             error_message = strings['code_invalid']
         else: # PasswordHashInvalidError
@@ -394,7 +394,6 @@ def register_all_handlers(bot_client_instance):
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
-            # Hide the reply keyboard using ReplyKeyboardHide directly.
             await e.respond("Processing your request...", buttons=ReplyKeyboardHide(), parse_mode='html')
 
             # Handle existing number (for new add flow only)
@@ -457,25 +456,24 @@ def register_all_handlers(bot_client_instance):
             account_id = int(state.split('_')[-1])
             await _handle_member_account_login_step(e, uid, account_id, e.text)
         
-        # New: Handling chat ID input for task configuration
+        # CRITICAL FIX: Handling chat ID input for task configuration
         elif state and state.startswith("awaiting_chat_input_source_"):
             task_id = int(state.split('_')[-1])
-            chat_inputs = e.text.strip().split('\n')
+            chat_inputs_raw = e.text.strip().split('\n')
             source_chat_ids = []
             
-            if len(chat_inputs) > 5: # Limit source chats to 5
+            if len(chat_inputs_raw) > 5: # Limit source chats to 5
                 return await e.respond(strings['TOO_MANY_SOURCE_CHATS'], parse_mode='Markdown')
 
-            for chat_input in chat_inputs:
-                chat_id_or_username = chat_input.strip()
-                if not chat_id_or_username: continue
+            for chat_input_raw in chat_inputs_raw:
+                chat_input = chat_input_raw.strip()
+                if not chat_input: continue
 
                 try:
-                    # Attempt to resolve entity via bot_client
-                    entity = await _bot_client_instance.get_entity(chat_id_or_username)
+                    entity = await _bot_client_instance.get_entity(chat_input)
                     source_chat_ids.append(entity.id)
                 except Exception as ex:
-                    LOGGER.warning(f"Could not resolve source chat: {chat_input}: {ex}", exc_info=True)
+                    LOGGER.warning(f"Could not resolve source chat '{chat_input}': {ex}", exc_info=True)
                     await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input), parse_mode='Markdown')
                     return # Stop process if any chat is invalid
 
@@ -498,7 +496,7 @@ def register_all_handlers(bot_client_instance):
                 entity = await _bot_client_instance.get_entity(chat_input)
                 target_chat_id = entity.id
             except Exception as ex:
-                LOGGER.warning(f"Could not resolve target chat: {chat_input}: {ex}", exc_info=True)
+                LOGGER.warning(f"Could not resolve target chat '{chat_input}': {ex}", exc_info=True)
                 await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input), parse_mode='Markdown')
                 return
 
@@ -552,11 +550,10 @@ def register_all_handlers(bot_client_instance):
         raw_data = e.data.decode()
         owner_data = db.get_user_data(uid)
 
-        # Handle 'yes_add_another_account' and 'no_add_another_account' buttons
         if raw_data.startswith("yes_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
             await e.answer("Initiating another account addition...", alert=True) 
-            await handle_add_member_account_flow(e) # Start the flow. It will respond with a new message.
+            await handle_add_member_account_flow(e)
             return 
 
         elif raw_data.startswith("no_add_another_account_"):
@@ -568,10 +565,10 @@ def register_all_handlers(bot_client_instance):
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
 
-        # CRITICAL FIX: Restructured m_add_set callback processing
-        elif raw_data.startswith("m_add_set|"): # From "Set Source/Target Chat" buttons in Task Details menu
+        # CRITICAL FIX: Restructured m_add_set callback processing and add assign_accounts_to_task
+        if raw_data.startswith("m_add_set|"): # From "Set Source/Target Chat" buttons in Task Details menu
             try:
-                _, selection_type, task_id_str = raw_data.split("|")
+                _, selection_type, task_id_str = raw_data.split("|") # page_str is no longer part of this action
                 task_id = int(task_id_str)
                 
                 # This part is now exclusively for setting state for direct chat ID input
@@ -589,31 +586,17 @@ def register_all_handlers(bot_client_instance):
                 await e.answer("An error occurred. Please try again.", alert=True)
             return # IMPORTANT: Always return after processing a unique callback type.
 
-        elif raw_data.startswith("m_add_assign_acc|"):
+        elif raw_data.startswith('{"action":"assign_accounts_to_task",'): # Handling assign_accounts_to_task callback
             try:
-                _, task_id_str, account_id_str = raw_data.split("|")
-                task_id = int(task_id_str)
-                account_id = int(account_id_str)
-
-                current_task = db.get_task_in_owner_doc(uid, task_id)
-                if not current_task: return await e.answer("Task not found.", alert=True)
-
-                assigned_accounts = utils.get(current_task, 'assigned_accounts', [])
-                
-                if account_id in assigned_accounts:
-                    assigned_accounts.remove(account_id)
-                    popup_text = strings['ACCOUNT_UNASSIGNED_FROM_TASK'].format(account_id=account_id, task_id=task_id)
-                else:
-                    assigned_accounts.append(account_id)
-                    popup_text = strings['ACCOUNT_ASSIGNED_TO_TASK'].format(account_id=account_id, task_id=task_id)
-
-                db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.assigned_accounts": assigned_accounts}})
-                await e.answer(utils.strip_html(popup_text), alert=True)
-                await menus.send_assign_accounts_menu(e, uid, task_id)
+                j = json.loads(raw_data)
+                task_id = utils.get(j, 'task_id')
+                if task_id:
+                    await menus.send_assign_accounts_menu(e, uid, task_id)
             except Exception as ex:
-                LOGGER.error(f"Error processing 'm_add_assign_acc' callback: {ex}", exc_info=True)
+                LOGGER.error(f"Error processing assign_accounts_to_task callback: {ex}", exc_info=True)
                 await e.answer("An error occurred.", alert=True)
-            return
+            return # IMPORTANT: Always return after processing a unique callback type.
+
 
         if raw_data == 'noop' or raw_data == '{"action":"noop"}':
             return await e.answer()
