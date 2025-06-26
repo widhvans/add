@@ -12,7 +12,7 @@ import members_adder
 # Configure logging to output to console and file for robust tracking
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO, # Set to INFO for general activity, DEBUG for more detailed messages
+    level=logging.INFO, # Set to INFO to see general bot activity, DEBUG for more detailed messages
     handlers=[
         logging.StreamHandler(), # Output to console
         logging.FileHandler('bot.log', mode='a') # Output to a file named bot.log
@@ -22,8 +22,8 @@ LOGGER = logging.getLogger(__name__)
 # --- END Logging Setup ---
 
 BOT_USERNAME = None
-# Initialize the TelegramClient instance, ensuring device_info is always passed
-bot = TelegramClient('bot_session', config.API_ID, config.API_HASH, **config.device_info) # Ensure device_info is passed here
+# Initialize the TelegramClient instance
+bot = TelegramClient('bot_session', config.API_ID, config.API_HASH, **config.device_info)
 
 async def main():
     global BOT_USERNAME
@@ -89,7 +89,7 @@ async def main():
         
         LOGGER.info("Bot is fully operational and listening for events. Press Ctrl+C to stop.")
         # Run the bot until disconnected. This keeps the event loop alive.
-        await bot.run_until_disconnected() # Corrected typo: run_until_disconnected
+        await bot.run_until_disconnected()
 
     except Exception as e:
         LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True) # Use exc_info=True to print full traceback
