@@ -71,7 +71,7 @@ async def send_commands_menu(e):
                          parse_mode='html')
 
 async def send_settings_menu(e): # This is the main members adding dashboard now
-    text = strings['SETTINGS_MENU_TEXT'] # This string needs to be defined
+    text = strings['SETTINGS_MENU_TEXT']
     buttons = [
         [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')], # This is a placeholder for the menu title
         [Button.inline("📣 Broadcast", data='{"action":"user_broadcast"}')],
@@ -139,7 +139,7 @@ async def display_member_accounts(e, uid):
         )
         buttons.append([Button.inline(f"Account {phone_number}", f'{{"action":"member_account_details","account_id":{account_id}}}')])
     
-    buttons.append([Button.inline("« Back", '{"action":"members_adding_menu"}')])
+    buttons.append([Button.inline("« Back", data='{"action":"members_adding_menu"}')])
     try:
         await e.edit(text, buttons=buttons, parse_mode='html')
     except Exception:
@@ -342,14 +342,9 @@ async def send_assign_accounts_menu(e, uid, task_id):
 async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
     owner_data = db.get_user_data(uid)
     
-    # In this new flow, the bot owner's 'session' field is not explicitly used for login anymore.
-    # We will assume the bot owner (the user interacting with the bot) has a valid session for the bot itself.
-    # To get dialogs from the owner's perspective, we should use the _bot_client_instance directly.
-    
     temp_msg = await e.respond("Fetching your chats, please wait...")
     
     try:
-        # Use the main bot client to fetch dialogs from the owner's perspective
         all_dialogs = await bot_client.get_dialogs(limit=None)
         
         dialogs = [d for d in all_dialogs if not (d.is_user and d.entity.is_self)]
@@ -411,4 +406,4 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
         back_action = f'{{"action":"m_add_task_menu", "task_id":{task_id}}}'
         await temp_msg.edit("Could not fetch chats. Please try again.", buttons=[[Button.inline("« Back", back_action)]], parse_mode='html')
     finally:
-        pass # No client disconnect needed for bot_client_instance
+        pass
