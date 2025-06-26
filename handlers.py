@@ -3,11 +3,12 @@ import json
 import asyncio
 import time
 import datetime
-import re # Added for re.search
+import re
 
 from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
 from telethon.tl.custom.button import Button
+from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButtonRequestPhone # Import ReplyKeyboardMarkup and KeyboardButtonRequestPhone
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
@@ -37,28 +38,20 @@ def set_bot_client_for_modules(client):
 
 # Helper function for main bot user login flow
 async def _handle_main_bot_user_login(contact_obj, event_obj):
-    numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-    await event_obj.delete() # Delete the message with the phone number button
-    m = await event_obj.respond("Requesting OTP...", buttons=None) # Respond with a new message
+    # For requesting phone, use ReplyKeyboardMarkup
+    request_phone_button = ReplyKeyboardMarkup(
+        [[KeyboardButtonRequestPhone(strings['ask_phone_button'])]], # Use the string for the button text
+        resize=True,
+        one_time=True
+    )
+    # Send a new message with the reply keyboard
+    m = await event_obj.respond(strings['ask_phone_prompt'], buttons=request_phone_button, parse_mode='html') # New string needed
+
+    # The actual login process will continue in the contact_handler.
+    # The current message (m) won't be edited by this function directly.
     
-    u=TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
-    
-    try:
-        await u.connect()
-        owner_data = db.get_user_data(event_obj.chat_id)
-        code_request = await u.send_code_request(contact_obj.phone_number)
-        
-        ld = {'phash':code_request.phone_code_hash,'sess':u.session.save(),'clen':code_request.type.length}
-        if owner_data:
-            db.update_user_data(owner_data['chat_id'],{'$set':{'ph':contact_obj.phone_number,'login':json.dumps(ld)}})
-            await m.edit(strings['ask_code'], buttons=numpad, parse_mode='html', link_preview=False)
-        else:
-            await m.edit("Error: Could not find your user record. Please /start the bot again.")
-    except Exception as ex:
-        LOGGER.error(f"Main bot login failed: {ex}")
-        await m.edit(f"Error: {ex}")
-    finally:
-        if u.is_connected(): await u.disconnect()
+    # We might need to delete this temporary message later or rely on Telethon to remove reply keyboards
+    # after the contact is sent. For a cleaner UI, we'll ensure the next step edits or sends new inline menu.
 
 # Helper for main bot sign in (called from callback query)
 async def sign_in_main_bot(e):
@@ -70,7 +63,7 @@ async def sign_in_main_bot(e):
     
     try:
         if utils.get(owner_data,'logged_in'):
-            await e.edit(strings['already_logged_in'], buttons=None, parse_mode='html') # Edit the callback message
+            await e.edit(strings['already_logged_in'], buttons=None, parse_mode='html')
             return True
         
         u = TelegramClient(StringSession(utils.get(login_data,'sess')), config.API_ID, config.API_HASH, **config.device_info)
@@ -118,7 +111,17 @@ async def sign_in_main_bot(e):
 async def handle_add_member_account_flow(e):
     uid = e.sender_id
     db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_phone"}})
-    await e.edit(strings['ADD_ACCOUNT_PROMPT'], buttons=[[Button.request_phone("Share Phone Number", resize=True, single_use=True)], [Button.inline("Cancel", '{"action":"members_adding_menu"}')]], parse_mode='html')
+    
+    # CRITICAL FIX FOR: ValueError: You cannot mix inline with normal buttons
+    # Send *only* the request_phone button as a reply keyboard
+    request_phone_markup = ReplyKeyboardMarkup(
+        [[KeyboardButtonRequestPhone(strings['share_phone_number_button'])]], # New string for button text
+        resize=True,
+        one_time=True
+    )
+    await e.respond(strings['ADD_ACCOUNT_PROMPT'], buttons=request_phone_markup, parse_mode='html')
+    # We no longer send an inline cancel button with the phone request.
+    # User can just ignore or send another command to cancel.
 
 # Helper for deleting member account
 async def _handle_delete_member_account(e, uid, account_id):
@@ -149,11 +152,11 @@ async def _handle_delete_member_account(e, uid, account_id):
 def register_all_handlers(bot_client_instance):
     """Registers all message and callback query handlers with the bot_client instance."""
     global _bot_client_instance
-    _bot_client_instance = bot_client_instance # Set the global instance
+    _bot_client_instance = bot_client_instance
 
     # --- Command Handlers ---
     @_bot_client_instance.on(events.NewMessage(pattern=r"/start", func=lambda e: e.is_private))
-    async def start_command_handler(e): # Renamed to avoid confusion
+    async def start_command_handler(e):
         s = await e.get_sender()
         if not db.get_user_data(s.id):
             db.users_db.insert_one({
@@ -164,38 +167,36 @@ def register_all_handlers(bot_client_instance):
                 "user_accounts": [],
                 "adding_tasks": []
             })
-        await e.respond("Welcome! Please wait while I load your menu...", parse_mode='html') # Respond first
-        await menus.send_start_menu(e) # Then edit that message if possible (menus.py logic will try edit)
+        await menus.send_start_menu(e) # This will handle sending a new message or editing appropriately
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/help", func=lambda e: e.is_private))
     async def help_command_handler(e):
-        await e.respond("Loading help menu...", parse_mode='html') # Respond first
-        await menus.send_help_menu(e) # Then edit that message
+        await menus.send_help_menu(e)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/commands", func=lambda e: e.is_private))
     async def commands_command_handler(e):
-        await e.respond("Loading commands...", parse_mode='html') # Respond first
-        await menus.send_commands_menu(e) # Then edit that message
+        await menus.send_commands_menu(e)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/settings", func=lambda e: e.is_private))
-    async def settings_command_handler(e): # Renamed
+    async def settings_command_handler(e):
         owner_data = db.get_user_data(e.sender_id)
         if not utils.get(owner_data, 'logged_in'):
             await e.respond(strings['need_login'], parse_mode='html')
         else:
-            await e.respond("Loading settings...", parse_mode='html') # Respond first
-            await menus.send_settings_menu(e) # Then edit that message
+            await menus.send_settings_menu(e)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/login", func=lambda e: e.is_private))
-    async def login_command_handler(e): # Renamed
+    async def login_command_handler(e):
         owner_data = db.get_user_data(e.sender_id)
         if utils.get(owner_data, 'logged_in'):
             await e.respond(strings['already_logged_in'], parse_mode='html')
         else:
-            await e.respond(strings['ask_phone'], buttons=[Button.request_phone("✅ Click to Login ✅", resize=True, single_use=True)], parse_mode='html')
+            # We don't delete e.g., /login command, we respond with phone button
+            await e.respond(strings['ask_phone'], buttons=ReplyKeyboardMarkup([[KeyboardButtonRequestPhone(strings['ask_phone_button'])]], resize=True, one_time=True), parse_mode='html')
+
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/logout", func=lambda e: e.is_private))
-    async def logout_command_handler(e): # Renamed
+    async def logout_command_handler(e):
         owner_data = db.get_user_data(e.sender_id)
         if not utils.get(owner_data, 'logged_in'):
             await e.respond(strings['need_login'], parse_mode='html')
@@ -204,22 +205,19 @@ def register_all_handlers(bot_client_instance):
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/addaccount", func=lambda e: e.is_private))
     async def add_member_account_command_handler(e):
-        await e.respond("Initiating account addition...", parse_mode='html') # Respond first
-        await handle_add_member_account_flow(e) # Call the flow function
+        # This sends a *new* message with the phone request reply keyboard
+        await handle_add_member_account_flow(e)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/myaccounts", func=lambda e: e.is_private))
     async def my_member_accounts_command_handler(e):
-        await e.respond("Fetching your accounts...", parse_mode='html') # Respond first
         await menus.display_member_accounts(e, e.sender_id)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/createtask", func=lambda e: e.is_private))
     async def create_adding_task_command_handler(e):
-        await e.respond("Starting new task creation...", parse_mode='html') # Respond first
         await menus.send_create_adding_task_menu(e, e.sender_id)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/managetasks", func=lambda e: e.is_private))
     async def manage_adding_tasks_command_handler(e):
-        await e.respond("Loading tasks...", parse_mode='html') # Respond first
         await menus.send_manage_adding_tasks_menu(e, e.sender_id)
 
     @_bot_client_instance.on(events.NewMessage(pattern="/stats", from_users=config.OWNER_ID))
@@ -263,8 +261,8 @@ def register_all_handlers(bot_client_instance):
         owner_data = db.get_user_data(uid)
         state = utils.get(owner_data, 'state')
 
-        if e.contact.user_id == e.chat_id: 
-            await _handle_main_bot_user_login(e.contact, e) 
+        if e.contact.user_id == e.chat_id: # Main bot owner login via contact share
+            await _handle_main_bot_user_login_contact_received(e.contact, e) # Call a specific handler for this
         
         elif state and state.startswith(("awaiting_member_account_relogin_phone_", "awaiting_member_account_phone")):
             account_id_match = re.search(r'_(\d+)$', state)
@@ -281,18 +279,18 @@ def register_all_handlers(bot_client_instance):
                 await client.connect()
                 code_request = await client.send_code_request(phone_number)
                 
-                new_account_entry = {}
-                if state == "awaiting_member_account_phone":
+                # Check if new account or re-login
+                if state == "awaiting_member_account_phone": # New account flow
                     existing_account_ids = [acc.get('account_id') for acc in utils.get(owner_data, 'user_accounts', []) if utils.get(acc, 'account_id')]
                     new_account_id = 1
                     if existing_account_ids:
                         new_account_id = max(existing_account_ids) + 1
-                    account_id = new_account_id
+                    account_id = new_account_id # Set account_id for the new entry
 
                     new_account_entry = {
                         "account_id": account_id,
                         "phone_number": phone_number,
-                        "session_string": client.session.save(),
+                        "session_string": client.session.save(), # Temp session initially
                         "logged_in": False,
                         "last_login_time": None,
                         "daily_adds_count": 0,
@@ -302,28 +300,21 @@ def register_all_handlers(bot_client_instance):
                         "is_banned_for_adding": False,
                         "flood_wait_until": 0,
                         "error_type": None,
+                        "temp_login_data": {} # Will be populated next
                     }
-                    db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}})
-                    db.update_user_account_in_owner_doc(uid, account_id,
-                        {"$set": {"user_accounts.$.temp_login_data": {
-                            'phash': code_request.phone_code_hash,
-                            'sess': client.session.save(),
-                            'clen': code_request.type.length,
-                            'code_ok': False,
-                            'need_pass': False
-                        }}}
-                    )
-                elif state.startswith("awaiting_member_account_relogin_phone_"):
-                    db.update_user_account_in_owner_doc(uid, account_id,
-                        {"$set": {"user_accounts.$.temp_login_data": {
-                            'phash': code_request.phone_code_hash,
-                            'sess': client.session.save(),
-                            'clen': code_request.type.length,
-                            'code_ok': False,
-                            'need_pass': False
-                        }}}
-                    )
+                    db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}}) # Add the new account entry
                 
+                # Now update the temp_login_data for either new or re-login flow
+                db.update_user_account_in_owner_doc(uid, account_id,
+                    {"$set": {"user_accounts.$.temp_login_data": {
+                        'phash': code_request.phone_code_hash,
+                        'sess': client.session.save(),
+                        'clen': code_request.type.length,
+                        'code_ok': False,
+                        'need_pass': False
+                    }}}
+                )
+            
                 db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_code_{account_id}"}})
                 
                 numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
@@ -331,7 +322,8 @@ def register_all_handlers(bot_client_instance):
 
             except Exception as ex:
                 LOGGER.error(f"Error during member account phone submission: {ex}")
-                if state == "awaiting_member_account_phone":
+                # If an error occurs during new account add, remove the incomplete entry
+                if state == "awaiting_member_account_phone" and account_id:
                     db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
                 db.update_user_data(uid, {"$set": {"state": None}})
                 await e.respond(f"Failed to process account: {ex}", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
@@ -476,14 +468,12 @@ def register_all_handlers(bot_client_instance):
         else:
             await e.respond("This command is not available in the current context.")
 
-    # --- Callback Query Handler ---
     @_bot_client_instance.on(events.CallbackQuery)
     async def main_callback_handler(e):
         uid = e.sender_id
         raw_data = e.data.decode()
         owner_data = db.get_user_data(uid)
 
-        # --- Member Adding Specific Callbacks ---
         if raw_data.startswith("m_add_sc|"):
             try:
                 parts = raw_data.split("|")
@@ -654,7 +644,7 @@ def register_all_handlers(bot_client_instance):
             elif action == "members_adding_menu":
                 await menus.send_members_adding_menu(e, uid)
             elif action == "add_member_account":
-                await handle_add_member_account_flow(e) # Call the flow function
+                await handle_add_member_account_flow(e)
             elif action == "manage_member_accounts":
                 await menus.display_member_accounts(e, uid)
             elif action == "member_account_details":
