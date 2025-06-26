@@ -32,9 +32,9 @@ strings = {
     'ADD_ACCOUNT_NUMBER_PROMPT': "Please send the **phone number(s)** (with country code, e.g., `+919876543210`) of the account(s) you want to add for member management.\n\n"
                                  "You can send **multiple numbers, one per line**, to add accounts in bulk.",
     'share_phone_number_button': "Share Phone Number", # Still kept for consistency, but not used in this flow
-    'ADD_ANOTHER_ACCOUNT_PROMPT': "✅ Account login successful! Would you like to add another account for member management?", # Added checkmark
-    'ASK_OTP_PROMPT': "Please enter the **OTP** you received on that Telegram account.", # Made bold
-    'ASK_PASSWORD_PROMPT': "Please enter the **2FA password** for that Telegram account.", # Made bold
+    'ADD_ANOTHER_ACCOUNT_PROMPT': "✅ Account login successful! Would you like to add another account for member management?",
+    'ASK_OTP_PROMPT': "Please enter the **OTP** you received on that Telegram account.",
+    'ASK_PASSWORD_PROMPT': "Please enter the **2FA password** for that Telegram account.",
     'ACCOUNT_ALREADY_ADDED': "Account with phone number `{phone_number}` is already added.",
 
     'ACCOUNT_ADDED_SUCCESS': "✅ Account {phone_number} added successfully! Account ID: `{account_id}`",
@@ -46,9 +46,9 @@ strings = {
                             "  Daily Adds: {daily_adds}/{limit}\n"
                             "  Soft Errors: {soft_errors}/{soft_limit}\n",
     'ACCOUNT_STATUS_HEALTHY': "✅ Healthy",
-    'ACCOUNT_STATUS_SUSPENDED': "⛔ Suspended (Reason: {reason})",
-    'ACCOUNT_STATUS_FLOODED': "⏳ Flood Wait (Until: {until_time})",
-    'ACCOUNT_STATUS_INVALID': "❌ Invalid Session",
+    'ACCOUNT_STATUS_SUSPENDED': "⛔ **Suspended** (Reason: {reason})", # Added bolding
+    'ACCOUNT_STATUS_FLOODED': "⏳ **Flood Wait** (Until: {until_time})", # Added bolding
+    'ACCOUNT_STATUS_INVALID': "❌ **Invalid Session**", # Added bolding
     'ACCOUNT_STATUS_INACTIVE': "⏸️ Inactive",
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
@@ -87,8 +87,8 @@ strings = {
     'MEMBER_ALREADY_IN_GROUP': "Member is already in the target group. Skipping.",
     'MEMBER_PRIVACY_RESTRICTED': "Member's privacy settings prevent adding. Skipping.",
     'PEER_FLOOD_DETECTED': "⚠️ **Peer Flood Detected!** Account `{account_id}` has hit a Peer Flood error. Suspending this account for the day to prevent a ban. Please check account activities.",
-    'FLOOD_WAIT_DETECTED': "⏳ Account `{account_id}` is in flood wait for {seconds} seconds. Waiting...",
-    'USER_ACCOUNT_DISCONNECTED': "❌ User account `{account_id}` disconnected or session invalid. Please re-login.",
+    'FLOOD_WAIT_DETECTED': "⏳ **Flood Wait** Account `{account_id}` is in flood wait for {seconds} seconds. Waiting...", # Added bolding
+    'USER_ACCOUNT_DISCONNECTED': "❌ **User account `{account_id}` disconnected or session invalid.** Please re-login.", # Added bolding
     'OWNER_ACCOUNT_LOGIN_REQUIRED': "You do not need to login your main account. Please use /addaccount to manage other accounts.",
     'CHOOSE_ACCOUNTS_FOR_TASK': "Select accounts to assign to Task {task_id}. Selected accounts will participate in adding members for this task.",
     'ACCOUNT_ASSIGNED_TO_TASK': "✅ Account `{account_id}` assigned to Task {task_id}.",
@@ -100,7 +100,7 @@ strings = {
     'BROADCAST_STARTED': "Starting broadcast to your main contacts...",
     'BROADCAST_PROGRESS': "Broadcasting... Sent to: {sent_count}/{total_count}, Failed: {failed_count}",
     'BROADCAST_PEER_FLOOD': "⚠️ Peer Flood Error encountered during broadcast. Stopping to prevent account issues.",
-    'BROADCAST_COMPLETE': "**Broadcast Complete**\n\n- **Sent to:** `{sent_count}` users\n- **Failed for:** `{failed_count}` users", # Changed to Markdown
+    'BROADCAST_COMPLETE': "**Broadcast Complete**\n\n- **Sent to:** `{sent_count}` users\n- **Failed for:** `{failed_count}` users",
     'BROADCAST_MENU_TEXT': "Send me the message you want to broadcast to all your main account's contacts. It can be text or media.",
     'BROADCAST_CANCELLED': "Broadcast cancelled.",
     'TUTORIAL_PROMPT_OWNER': "Please send me the tutorial video. This video will be shown to users when they click 'Tutorial'.",
