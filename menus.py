@@ -8,8 +8,6 @@ import utils
 import db
 from strings import strings
 
-# This `bot_client` will be passed from bot.py when registering handlers.
-# It represents the main TelegramClient for the bot itself.
 bot_client = None
 
 def set_bot_client(client):
@@ -41,22 +39,18 @@ async def check_fsub(e):
         pass
         return True
 
-async def send_start_menu(e):
-    # This function expects `e` to be an editable message (i.e., a message the bot sent to which this handler responds)
+async def send_main_menu(e): # NEW: Main menu for the bot's simplified interface
     s = await e.get_sender()
     st = strings['START_TEXT'].format(user_firstname=s.first_name)
     btns = [
-        [Button.inline("Help 💡", data='{"action":"help"}'), Button.inline("Commands 📋", data='{"action":"commands"}')],
-        [Button.inline("Tutorial 🎬", data='{"action":"show_tutorial"}'), Button.url("Updates Channel 📢", url=config.UPDATES_CHANNEL_URL)]
+        [Button.inline("🚀 Let's Go!", data='{"action":"members_adding_menu"}')] # Direct to member adding menu
     ]
-    # Try to edit the message. If it fails, send a new one.
     try:
         await e.edit(message=st, buttons=btns, link_preview=False, parse_mode='html')
-    except Exception: # Catch MessageNotModifiedError or MessageIdInvalidError etc.
+    except Exception:
         await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='html')
 
 async def send_help_menu(e):
-    # This function expects `e` to be an editable message
     try:
         await e.edit(strings['HELP_TEXT_FEATURES'],
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
@@ -67,7 +61,6 @@ async def send_help_menu(e):
                          parse_mode='html')
 
 async def send_commands_menu(e):
-    # This function expects `e` to be an editable message
     try:
         await e.edit(strings['COMMANDS_TEXT'],
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
@@ -77,11 +70,10 @@ async def send_commands_menu(e):
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
                          parse_mode='html')
 
-async def send_settings_menu(e):
-    # This function expects `e` to be an editable message
-    text = strings['SETTINGS_MENU_TEXT']
+async def send_settings_menu(e): # This is the main members adding dashboard now
+    text = strings['SETTINGS_MENU_TEXT'] # This string needs to be defined
     buttons = [
-        [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')],
+        [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')], # This is a placeholder for the menu title
         [Button.inline("📣 Broadcast", data='{"action":"user_broadcast"}')],
         [Button.inline("« Back to Main", data='{"action":"main_menu"}')]
     ]
@@ -91,7 +83,6 @@ async def send_settings_menu(e):
         await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_members_adding_menu(e, uid):
-    # This function expects `e` to be an editable message
     text = "👥 **Members Adding Bot Settings**\n\n" \
            "Here you can manage your accounts for adding members and set up adding tasks."
     buttons = [
@@ -99,19 +90,14 @@ async def send_members_adding_menu(e, uid):
         [Button.inline("📝 Manage Accounts", data='{"action":"manage_member_accounts"}')],
         [Button.inline("➕ Create Task", data='{"action":"create_adding_task"}')],
         [Button.inline("⚙️ Manage Tasks", data='{"action":"manage_adding_tasks"}')],
-        [Button.inline("« Back", data='{"action":"settings"}')]
+        [Button.inline("« Back", data='{"action":"main_menu"}')] # Back to main menu
     ]
     try:
         await e.edit(text, buttons=buttons, parse_mode='html')
     except Exception:
         await e.respond(text, buttons=buttons, parse_mode='html')
 
-
-# Moved handle_add_member_account_flow to handlers.py
-# Removed handle_add_member_account_flow(e) from menus.py
-
 async def display_member_accounts(e, uid):
-    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     accounts = utils.get(owner_data, 'user_accounts', [])
     if not accounts:
@@ -160,7 +146,6 @@ async def display_member_accounts(e, uid):
         await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_member_account_details(e, uid, account_id):
-    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     account_info = utils.get(owner_data, 'user_accounts', [])
     account_info = next((acc for acc in account_info if utils.get(acc, 'account_id') == account_id), None)
@@ -198,7 +183,6 @@ async def send_member_account_details(e, uid, account_id):
 
 
 async def send_create_adding_task_menu(e, uid):
-    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     existing_tasks = utils.get(owner_data, 'adding_tasks', [])
     next_task_id = 1
@@ -219,12 +203,10 @@ async def send_create_adding_task_menu(e, uid):
     }
     db.update_user_data(uid, {"$push": {"adding_tasks": new_task}})
     
-    # This calls another function, the edit/respond logic is inside send_adding_task_details_menu
     await send_adding_task_details_menu(e, uid, next_task_id)
 
 
 async def send_manage_adding_tasks_menu(e, uid):
-    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     tasks = utils.get(owner_data, 'adding_tasks', [])
     
@@ -238,7 +220,7 @@ async def send_manage_adding_tasks_menu(e, uid):
 
     text = strings['MANAGE_TASKS_HEADER']
     buttons = []
-    import members_adder # Import here to avoid circular dependency at top level
+    import members_adder 
     for task in tasks:
         task_id = utils.get(task, 'task_id', 'N/A')
         status = utils.get(task, 'status', 'draft')
@@ -274,7 +256,6 @@ async def send_manage_adding_tasks_menu(e, uid):
         await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_adding_task_details_menu(e, uid, task_id):
-    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     task = db.get_task_in_owner_doc(uid, task_id)
     if not task: return await e.answer("Task not found.", alert=True)
@@ -282,7 +263,7 @@ async def send_adding_task_details_menu(e, uid, task_id):
     status_text = strings[f'TASK_STATUS_{utils.get(task, "status", "draft").upper()}']
 
     source_chat_info = "Not Set"
-    import members_adder # Import here to avoid circular dependency
+    import members_adder 
     if utils.get(task, 'source_chat_id'):
         try: source_chat_info = await members_adder.get_chat_title(bot_client, task['source_chat_id'])
         except: source_chat_info = f"ID: <code>{task['source_chat_id']}</code>"
@@ -332,7 +313,6 @@ async def send_adding_task_details_menu(e, uid, task_id):
         await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_assign_accounts_menu(e, uid, task_id):
-    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     all_accounts = utils.get(owner_data, 'user_accounts', [])
     current_task = db.get_task_in_owner_doc(uid, task_id)
@@ -360,20 +340,17 @@ async def send_assign_accounts_menu(e, uid, task_id):
         await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
-    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     
-    session_string = utils.get(owner_data, 'session')
-    if not session_string: await e.answer(strings['OWNER_ACCOUNT_LOGIN_REQUIRED'], alert=True); return
-
-    # Temporarily respond to indicate loading, then edit the actual menu
-    temp_msg = await e.respond("Fetching your chats, please wait...") # New temp message
-    u = TelegramClient(StringSession(session_string), config.API_ID, config.API_HASH, **config.device_info)
+    # In this new flow, the bot owner's 'session' field is not explicitly used for login anymore.
+    # We will assume the bot owner (the user interacting with the bot) has a valid session for the bot itself.
+    # To get dialogs from the owner's perspective, we should use the _bot_client_instance directly.
+    
+    temp_msg = await e.respond("Fetching your chats, please wait...")
     
     try:
-        await u.connect()
-        all_dialogs = await u.get_dialogs(limit=None)
-        await u.disconnect()
+        # Use the main bot client to fetch dialogs from the owner's perspective
+        all_dialogs = await bot_client.get_dialogs(limit=None)
         
         dialogs = [d for d in all_dialogs if not (d.is_user and d.entity.is_self)]
 
@@ -427,15 +404,11 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
         
         prompt = strings['SELECT_SOURCE_CHAT'] if selection_type == 'from' else strings['SELECT_TARGET_CHAT']
         
-        # Edit the temporary message with the actual menu
         await temp_msg.edit(prompt.format(task_id=task_id), buttons=buttons, parse_mode='html')
 
     except Exception as ex:
         # LOGGER.error(f"Chat selection error for {uid}: {ex}") # Add logging here
         back_action = f'{{"action":"m_add_task_menu", "task_id":{task_id}}}'
-        await temp_msg.edit("Could not fetch chats. Your session might be invalid. Please try again.", buttons=[[Button.inline("« Back", back_action)]], parse_mode='html')
+        await temp_msg.edit("Could not fetch chats. Please try again.", buttons=[[Button.inline("« Back", back_action)]], parse_mode='html')
     finally:
-        if u and u.is_connected(): await u.disconnect()
-
-# Moved handle_usr (now _handle_main_bot_user_login) to handlers.py
-# Removed handle_usr from menus.py
+        pass # No client disconnect needed for bot_client_instance
