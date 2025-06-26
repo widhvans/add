@@ -43,34 +43,33 @@ def find_user_account_in_owner_doc(owner_id, account_id):
         return next((acc for acc in owner_data.get('user_accounts', []) if acc.get('account_id') == account_id), None)
     return None
 
-# CRITICAL FIX: Modified update_user_account_in_owner_doc to correctly use positional operator for nested array updates
-def update_user_account_in_owner_doc(owner_id, account_id, update_fields):
+# CRITICAL FIX: Modified update_user_account_in_owner_doc to correctly use arrayFilters
+def update_user_account_in_owner_doc(owner_id, account_id, update_fields_dict):
     """
     Updates specific fields of a user account within the 'user_accounts' array
-    for a given owner, using the positional filtered operator for safety.
+    for a given owner, using arrayFilters for precise targeting.
+    
+    update_fields_dict should be a dictionary like:
+    {"user_accounts.$[account].logged_in": True, "user_accounts.$[account].temp_login_data": {}}
     """
-    # The filter must uniquely identify the document AND the array element to be updated.
-    # $[] operator can be safer in recent PyMongo/MongoDB versions for non-filtered updates,
-    # but for targeted updates with $ (positional), filtering in update_one is key.
-    # For now, stick to the safe $ operator with arrayFilters or nested queries.
     
-    # Simpler and safer way: Use arrayFilters for nested updates
-    # This requires MongoDB 3.6+
+    # We construct the update query with the positional filtered operator "$[account]"
+    # and provide the arrayFilters to specify which 'account' element to apply it to.
     
-    # Example: update_fields = {"user_accounts.$[elem].temp_login_data": new_temp_data}
-    # And array_filters = [{"elem.account_id": account_id}]
+    # Example: update_fields_dict = {
+    #   "user_accounts.$[account].session_string": "new_session",
+    #   "user_accounts.$[account].logged_in": True
+    # }
     
-    # The original update_one syntax with "user_accounts.$" is correct IF the query matches
-    # the nested element. The issue comes when the state changes and it no longer matches.
-    # Let's use the explicit filtering for the $ operator.
-    
-    # We must ensure the query part of update_one explicitly matches the nested element.
-    # This is often done by including the array field in the main query filter.
-    
+    # array_filters defines which element is referred to by '$[account]'
+    array_filters = [{"account.account_id": account_id}]
+
     return users_db.update_one(
-        {"chat_id": owner_id, "user_accounts.account_id": account_id}, # Filter for owner AND the specific account within the array
-        update_fields # Example: {"$set": {"user_accounts.$.logged_in": True}}
+        {"chat_id": owner_id}, # Main filter to find the owner's document
+        {"$set": update_fields_dict}, # Use $set with the positional filtered operator
+        array_filters=array_filters # Specify the filter for the array element
     )
+
 
 def get_task_in_owner_doc(owner_id, task_id):
     owner_data = users_db.find_one({"chat_id": owner_id})
@@ -79,4 +78,7 @@ def get_task_in_owner_doc(owner_id, task_id):
     return None
 
 def update_task_in_owner_doc(owner_id, task_id, update_query):
+    # This also needs to be updated to use arrayFilters if updating nested fields in 'adding_tasks' array
+    # For now, it might be fine if it only updates top-level task fields or uses $set for a known element.
+    # If you encounter similar errors with tasks, modify this function too.
     return users_db.update_one({"chat_id": owner_id, "adding_tasks.task_id": task_id}, update_query)
