@@ -1,12 +1,11 @@
 from telethon.tl.custom.button import Button
 import datetime
 import time
-from telethon.errors import UserNotParticipantError # Import this specifically
+from telethon.errors import UserNotParticipantError
 
-# Import the *instance* named 'config' from the config module
-from config import config # <- IMPORTANT CHANGE
-import utils # Import utility functions
-import db # Import database module
+from config import config
+import utils
+import db
 from strings import strings
 
 # This `bot_client` will be passed from bot.py when registering handlers.
@@ -39,38 +38,60 @@ async def check_fsub(e):
         await e.respond(strings['FSUB_MESSAGE'], buttons=btns, parse_mode='html')
         return False
     except Exception as ex:
-        pass # Logging should be handled in handlers.py or bot.py if critical
+        pass
         return True
 
 async def send_start_menu(e):
+    # This function expects `e` to be an editable message (i.e., a message the bot sent to which this handler responds)
     s = await e.get_sender()
     st = strings['START_TEXT'].format(user_firstname=s.first_name)
     btns = [
         [Button.inline("Help 💡", data='{"action":"help"}'), Button.inline("Commands 📋", data='{"action":"commands"}')],
         [Button.inline("Tutorial 🎬", data='{"action":"show_tutorial"}'), Button.url("Updates Channel 📢", url=config.UPDATES_CHANNEL_URL)]
     ]
-    await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='html')
+    # Try to edit the message. If it fails, send a new one.
+    try:
+        await e.edit(message=st, buttons=btns, link_preview=False, parse_mode='html')
+    except Exception: # Catch MessageNotModifiedError or MessageIdInvalidError etc.
+        await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='html')
 
 async def send_help_menu(e):
-    await e.edit(strings['HELP_TEXT_FEATURES'],
-                     buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                     parse_mode='html')
+    # This function expects `e` to be an editable message
+    try:
+        await e.edit(strings['HELP_TEXT_FEATURES'],
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='html')
+    except Exception:
+        await e.respond(strings['HELP_TEXT_FEATURES'],
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='html')
 
 async def send_commands_menu(e):
-    await e.edit(strings['COMMANDS_TEXT'],
-                     buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                     parse_mode='html')
+    # This function expects `e` to be an editable message
+    try:
+        await e.edit(strings['COMMANDS_TEXT'],
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='html')
+    except Exception:
+        await e.respond(strings['COMMANDS_TEXT'],
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='html')
 
 async def send_settings_menu(e):
+    # This function expects `e` to be an editable message
     text = strings['SETTINGS_MENU_TEXT']
     buttons = [
         [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')],
         [Button.inline("📣 Broadcast", data='{"action":"user_broadcast"}')],
         [Button.inline("« Back to Main", data='{"action":"main_menu"}')]
     ]
-    await e.edit(text, buttons=buttons, parse_mode='html')
+    try:
+        await e.edit(text, buttons=buttons, parse_mode='html')
+    except Exception:
+        await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_members_adding_menu(e, uid):
+    # This function expects `e` to be an editable message
     text = "👥 **Members Adding Bot Settings**\n\n" \
            "Here you can manage your accounts for adding members and set up adding tasks."
     buttons = [
@@ -80,13 +101,24 @@ async def send_members_adding_menu(e, uid):
         [Button.inline("⚙️ Manage Tasks", data='{"action":"manage_adding_tasks"}')],
         [Button.inline("« Back", data='{"action":"settings"}')]
     ]
-    await e.edit(text, buttons=buttons, parse_mode='html')
+    try:
+        await e.edit(text, buttons=buttons, parse_mode='html')
+    except Exception:
+        await e.respond(text, buttons=buttons, parse_mode='html')
+
+
+# Moved handle_add_member_account_flow to handlers.py
+# Removed handle_add_member_account_flow(e) from menus.py
 
 async def display_member_accounts(e, uid):
+    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     accounts = utils.get(owner_data, 'user_accounts', [])
     if not accounts:
-        return await e.edit(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+        try:
+            return await e.edit(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+        except Exception:
+            return await e.respond(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
 
     text = strings['MY_ACCOUNTS_HEADER']
     buttons = []
@@ -122,9 +154,13 @@ async def display_member_accounts(e, uid):
         buttons.append([Button.inline(f"Account {phone_number}", f'{{"action":"member_account_details","account_id":{account_id}}}')])
     
     buttons.append([Button.inline("« Back", '{"action":"members_adding_menu"}')])
-    await e.edit(text, buttons=buttons, parse_mode='html')
+    try:
+        await e.edit(text, buttons=buttons, parse_mode='html')
+    except Exception:
+        await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_member_account_details(e, uid, account_id):
+    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     account_info = utils.get(owner_data, 'user_accounts', [])
     account_info = next((acc for acc in account_info if utils.get(acc, 'account_id') == account_id), None)
@@ -155,10 +191,14 @@ async def send_member_account_details(e, uid, account_id):
         [Button.inline("Delete Account", f'{{"action":"confirm_delete_member_account","account_id":{account_id}}}')],
         [Button.inline("« Back", data='{"action":"manage_member_accounts"}')]
     ]
-    await e.edit(text, buttons=buttons, parse_mode='html')
+    try:
+        await e.edit(text, buttons=buttons, parse_mode='html')
+    except Exception:
+        await e.respond(text, buttons=buttons, parse_mode='html')
 
 
 async def send_create_adding_task_menu(e, uid):
+    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     existing_tasks = utils.get(owner_data, 'adding_tasks', [])
     next_task_id = 1
@@ -179,22 +219,26 @@ async def send_create_adding_task_menu(e, uid):
     }
     db.update_user_data(uid, {"$push": {"adding_tasks": new_task}})
     
+    # This calls another function, the edit/respond logic is inside send_adding_task_details_menu
     await send_adding_task_details_menu(e, uid, next_task_id)
 
 
 async def send_manage_adding_tasks_menu(e, uid):
+    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     tasks = utils.get(owner_data, 'adding_tasks', [])
     
     if not tasks:
         text = "You have no adding tasks yet. Use '➕ Create Task' to add one."
         buttons = [[Button.inline("« Back", data='{"action":"members_adding_menu"}')]]
-        return await e.edit(text, buttons=buttons, parse_mode='html')
+        try:
+            return await e.edit(text, buttons=buttons, parse_mode='html')
+        except Exception:
+            return await e.respond(text, buttons=buttons, parse_mode='html')
 
     text = strings['MANAGE_TASKS_HEADER']
     buttons = []
-    # Import members_adder locally to avoid circular dependency at top level
-    import members_adder 
+    import members_adder # Import here to avoid circular dependency at top level
     for task in tasks:
         task_id = utils.get(task, 'task_id', 'N/A')
         status = utils.get(task, 'status', 'draft')
@@ -224,9 +268,13 @@ async def send_manage_adding_tasks_menu(e, uid):
         buttons.append([Button.inline(f"Task {task_id} - {status_text}", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')])
 
     buttons.append([Button.inline("« Back", data='{"action":"members_adding_menu"}')])
-    await e.edit(text, buttons=buttons, parse_mode='html')
+    try:
+        await e.edit(text, buttons=buttons, parse_mode='html')
+    except Exception:
+        await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_adding_task_details_menu(e, uid, task_id):
+    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     task = db.get_task_in_owner_doc(uid, task_id)
     if not task: return await e.answer("Task not found.", alert=True)
@@ -278,9 +326,13 @@ async def send_adding_task_details_menu(e, uid, task_id):
     buttons.append([Button.inline("🗑️ Delete Task", f'{{"action":"confirm_delete_adding_task","task_id":{task_id}}}')])
     buttons.append([Button.inline("« Back", data='{"action":"manage_adding_tasks"}')])
     
-    await e.edit(text, buttons=buttons, parse_mode='html')
+    try:
+        await e.edit(text, buttons=buttons, parse_mode='html')
+    except Exception:
+        await e.respond(text, buttons=buttons, parse_mode='html')
 
 async def send_assign_accounts_menu(e, uid, task_id):
+    # This function expects `e` to be an editable message
     owner_data = db.get_user_data(uid)
     all_accounts = utils.get(owner_data, 'user_accounts', [])
     current_task = db.get_task_in_owner_doc(uid, task_id)
@@ -302,24 +354,88 @@ async def send_assign_accounts_menu(e, uid, task_id):
     buttons.append([Button.inline("Done ✅", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
     buttons.append([Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
 
-    await e.edit(text, buttons=buttons, parse_mode='html')
+    try:
+        await e.edit(text, buttons=buttons, parse_mode='html')
+    except Exception:
+        await e.respond(text, buttons=buttons, parse_mode='html')
 
-# This is the original _handle_usr function from bot.py, now inline here
-async def handle_usr(c,e): # Used for main bot login via contact sharing
-    numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-    await e.delete();m=await e.respond("Requesting OTP...",buttons=None);
-    u=TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info) # Use config here
+async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
+    # This function expects `e` to be an editable message
+    owner_data = db.get_user_data(uid)
+    
+    session_string = utils.get(owner_data, 'session')
+    if not session_string: await e.answer(strings['OWNER_ACCOUNT_LOGIN_REQUIRED'], alert=True); return
+
+    # Temporarily respond to indicate loading, then edit the actual menu
+    temp_msg = await e.respond("Fetching your chats, please wait...") # New temp message
+    u = TelegramClient(StringSession(session_string), config.API_ID, config.API_HASH, **config.device_info)
     
     try:
-        await u.connect();owner_data=db.get_user_data(e.chat_id);cr=await u.send_code_request(c.phone_number)
-        ld={'phash':cr.phone_code_hash,'sess':u.session.save(),'clen':cr.type.length}
-        if owner_data:
-            db.update_user_data(owner_data['chat_id'],{'$set':{'ph':c.phone_number,'login':json.dumps(ld)}})
-            await m.edit(strings['ask_code'], buttons=numpad, parse_mode='html', link_preview=False)
-        else:
-            await m.edit("Error: Could not find your user record. Please /start the bot again.")
+        await u.connect()
+        all_dialogs = await u.get_dialogs(limit=None)
+        await u.disconnect()
+        
+        dialogs = [d for d in all_dialogs if not (d.is_user and d.entity.is_self)]
+
+        items_per_page = 5
+        total_items = len(dialogs)
+        total_pages = (total_items + items_per_page - 1) // items_per_page
+        
+        start_index = (page - 1) * items_per_page
+        end_index = start_index + items_per_page
+        
+        paginated_dialogs = dialogs[start_index:end_index]
+        
+        buttons = []
+        
+        current_task_doc = db.get_task_in_owner_doc(uid, task_id)
+        selected_to = utils.get(current_task_doc, 'target_chat_ids', [])
+        selected_from = utils.get(current_task_doc, 'source_chat_id')
+        
+        buttons.append([Button.inline("🔄 Refresh List", f'm_add_set|{selection_type}|{task_id}|{page}')])
+
+        for dialog in paginated_dialogs:
+            prefix = ""
+            if selection_type == 'to' and dialog.id in selected_to:
+                prefix = "✅ "
+            elif selection_type == 'from' and dialog.id == selected_from:
+                prefix = "✅ "
+
+            title = (utils.get(dialog, 'title', '')[:30] + '..') if len(utils.get(dialog, 'title', '')) > 32 else utils.get(dialog, 'title', 'Unknown Chat')
+            callback_data = f'm_add_sc|{dialog.id}|{selection_type}|{task_id}|{page}'
+            buttons.append([Button.inline(f"{prefix}{title}", callback_data)])
+        
+        nav_row = []
+        if page > 1:
+            prev_callback = f'm_add_set|{selection_type}|{task_id}|{page-1}'
+            nav_row.append(Button.inline("◀️ Prev", prev_callback))
+        
+        if total_pages > 0:
+            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop'))
+
+        if page < total_pages:
+            next_callback = f'm_add_set|{selection_type}|{task_id}|{page+1}'
+            nav_row.append(Button.inline("Next ▶️", next_callback))
+        
+        if nav_row:
+            buttons.append(nav_row)
+
+        if selection_type == 'to':
+            buttons.append([Button.inline("Done ✅", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
+            
+        buttons.append([Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
+        
+        prompt = strings['SELECT_SOURCE_CHAT'] if selection_type == 'from' else strings['SELECT_TARGET_CHAT']
+        
+        # Edit the temporary message with the actual menu
+        await temp_msg.edit(prompt.format(task_id=task_id), buttons=buttons, parse_mode='html')
+
     except Exception as ex:
-        # LOGGER.error(f"Error in handle_usr: {ex}") # Add logging
-        await m.edit(f"Error: {ex}")
+        # LOGGER.error(f"Chat selection error for {uid}: {ex}") # Add logging here
+        back_action = f'{{"action":"m_add_task_menu", "task_id":{task_id}}}'
+        await temp_msg.edit("Could not fetch chats. Your session might be invalid. Please try again.", buttons=[[Button.inline("« Back", back_action)]], parse_mode='html')
     finally:
-        if u.is_connected():await u.disconnect()
+        if u and u.is_connected(): await u.disconnect()
+
+# Moved handle_usr (now _handle_main_bot_user_login) to handlers.py
+# Removed handle_usr from menus.py
