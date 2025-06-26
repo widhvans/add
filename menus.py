@@ -328,15 +328,15 @@ async def send_adding_task_details_menu(e, uid, task_id):
     )
 
     buttons = [
-        [Button.inline("📤 Set Source Chat", f'm_add_set|from|{task_id}|1')],
-        [Button.inline("📥 Set Target Chat(s)", f'm_add_set|to|{task_id}|1')],
+        [Button.inline("📤 Set Source Chat", f'{{"action":"set_task_source_chat","task_id":{task_id}}}')], # Changed action to trigger new input flow
+        [Button.inline("📥 Set Target Chat", f'{{"action":"set_task_target_chat","task_id":{task_id}}}')], # Changed action and removed (s)
         [Button.inline("👥 Assign Accounts", f'{{"action":"assign_accounts_to_task","task_id":{task_id}}}')]
     ]
     
     if utils.get(task, 'status') == 'active':
         buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
     elif utils.get(task, 'status') == 'paused' or utils.get(task, 'status') == 'draft' or utils.get(task, 'status') == 'completed':
-        if utils.get(task, 'source_chat_id') or utils.get(task, 'target_chat_ids') or utils.get(task, 'assigned_accounts'): # Only allow start if some config is done
+        if utils.get(task, 'source_chat_id') and utils.get(task, 'target_chat_ids') and utils.get(task, 'assigned_accounts'): # Only allow start if all config is done
             buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
     
     buttons.append([Button.inline("🗑️ Delete Task", f'{{"action":"confirm_delete_adding_task","task_id":{task_id}}}')])
@@ -374,69 +374,15 @@ async def send_assign_accounts_menu(e, uid, task_id):
     except Exception:
         await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
-async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
-    owner_data = db.get_user_data(uid)
+# send_chat_selection_menu is now modified to handle direct ID/username input.
+# It will no longer offer an interactive list of chats for selection.
+async def send_chat_selection_menu(e, uid, selection_type, task_id): # Removed page parameter
+    prompt_key = ""
+    if selection_type == 'from':
+        prompt_key = 'ASK_SOURCE_CHAT_ID'
+    elif selection_type == 'to':
+        prompt_key = 'ASK_TARGET_CHAT_ID'
     
-    temp_msg = await e.respond("Fetching your chats, please wait...")
+    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_{selection_type}_{task_id}"}})
     
-    try:
-        all_dialogs = await bot_client.get_dialogs(limit=None)
-        
-        dialogs = [d for d in all_dialogs if not (d.is_user and d.entity.is_self)]
-
-        items_per_page = 5
-        total_items = len(dialogs)
-        total_pages = (total_items + items_per_page - 1) // items_per_page
-        
-        start_index = (page - 1) * items_per_page
-        end_index = start_index + items_per_page
-        
-        paginated_dialogs = dialogs[start_index:end_index]
-        
-        buttons = []
-        
-        current_task_doc = db.get_task_in_owner_doc(uid, task_id)
-        selected_to = utils.get(current_task_doc, 'target_chat_ids', [])
-        selected_from = utils.get(current_task_doc, 'source_chat_id')
-        
-        buttons.append([Button.inline("🔄 Refresh List", f'm_add_set|{selection_type}|{task_id}|{page}')])
-
-        for dialog in paginated_dialogs:
-            prefix = ""
-            if selection_type == 'to' and dialog.id in selected_to:
-                prefix = "✅ "
-            elif selection_type == 'from' and dialog.id == selected_from:
-                prefix = "✅ "
-
-            title = (utils.get(dialog, 'title', '')[:30] + '..') if len(utils.get(dialog, 'title', '')) > 32 else utils.get(dialog, 'title', 'Unknown Chat')
-            callback_data = f'm_add_sc|{dialog.id}|{selection_type}|{task_id}|{page}'
-            buttons.append([Button.inline(f"{prefix}{title}", callback_data)])
-        
-        nav_row = []
-        if page > 1:
-            prev_callback = f'm_add_set|{selection_type}|{task_id}|{page-1}'
-            nav_row.append(Button.inline("◀️ Prev", prev_callback))
-        
-        if total_pages > 0:
-            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop'))
-
-        if page < total_pages:
-            next_callback = f'm_add_set|{selection_type}|{task_id}|{page+1}'
-            nav_row.append(Button.inline("Next ▶️", next_callback))
-        
-        if nav_row:
-            buttons.append(nav_row)
-
-        if selection_type == 'to':
-            buttons.append([Button.inline("Done ✅", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
-            
-        buttons.append([Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
-        
-        prompt = strings['SELECT_SOURCE_CHAT'] if selection_type == 'from' else strings['SELECT_TARGET_CHAT']
-        
-        await temp_msg.edit(prompt.format(task_id=task_id), buttons=buttons, parse_mode='Markdown')
-    except Exception as ex:
-        back_action = f'{{"action":"m_add_task_menu", "task_id":{task_id}}}'
-        await temp_msg.edit("Could not fetch chats. Please try again.", buttons=[[Button.inline("« Back", back_action)]], parse_mode='Markdown')
-    finally:
-        pass
+    await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
