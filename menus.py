@@ -1,12 +1,13 @@
 from telethon.tl.custom.button import Button
 import datetime
 import time
+from telethon.errors import UserNotParticipantError # Import this specifically
+
 # Import the *instance* named 'config' from the config module
 from config import config # <- IMPORTANT CHANGE
 import utils # Import utility functions
 import db # Import database module
 from strings import strings
-from telethon.errors import UserNotParticipantError # Import this specifically
 
 # This `bot_client` will be passed from bot.py when registering handlers.
 # It represents the main TelegramClient for the bot itself.
@@ -20,7 +21,6 @@ def yesno(c):
     return [[Button.inline("Yes", f'{{"action":"yes_{c}"}}')], [Button.inline("No", f'{{"action":"no_{c}"}}')]]
 
 async def check_fsub(e):
-    # Use config.FORCE_SUB_CHANNEL and config.OWNER_ID directly
     if not config.FORCE_SUB_CHANNEL or e.sender_id == config.OWNER_ID:
         return True
     c = config.FORCE_SUB_CHANNEL
@@ -39,9 +39,7 @@ async def check_fsub(e):
         await e.respond(strings['FSUB_MESSAGE'], buttons=btns, parse_mode='html')
         return False
     except Exception as ex:
-        # We don't have LOGGER imported directly in menus.py, but for debugging:
-        # import logging
-        # logging.getLogger(__name__).error(f"F-Sub Error for channel '{c}': {ex}")
+        pass # Logging should be handled in handlers.py or bot.py if critical
         return True
 
 async def send_start_menu(e):
@@ -51,7 +49,6 @@ async def send_start_menu(e):
         [Button.inline("Help 💡", data='{"action":"help"}'), Button.inline("Commands 📋", data='{"action":"commands"}')],
         [Button.inline("Tutorial 🎬", data='{"action":"show_tutorial"}'), Button.url("Updates Channel 📢", url=config.UPDATES_CHANNEL_URL)]
     ]
-    # Use config.START_IMAGE_URL directly
     await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='html')
 
 async def send_help_menu(e):
@@ -105,7 +102,7 @@ async def display_member_accounts(e, uid):
             elif utils.get(account, 'flood_wait_until', 0) > time.time():
                 remaining_time = int(utils.get(account, 'flood_wait_until', 0) - time.time())
                 status = strings['ACCOUNT_STATUS_FLOODED'].format(until_time=utils.fd(remaining_time))
-            elif utils.get(account, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS: # Use config.SOFT_ADD_LIMIT_ERRORS
+            elif utils.get(account, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS:
                 status = strings['ACCOUNT_STATUS_SUSPENDED'].format(reason="Too many errors")
         else:
             status = strings['ACCOUNT_STATUS_INVALID']
@@ -118,9 +115,9 @@ async def display_member_accounts(e, uid):
             account_id=account_id,
             status=status,
             daily_adds=daily_adds,
-            limit=config.MAX_DAILY_ADDS_PER_ACCOUNT, # Use config.MAX_DAILY_ADDS_PER_ACCOUNT
+            limit=config.MAX_DAILY_ADDS_PER_ACCOUNT,
             soft_errors=soft_errors,
-            soft_limit=config.SOFT_ADD_LIMIT_ERRORS # Use config.SOFT_ADD_LIMIT_ERRORS
+            soft_limit=config.SOFT_ADD_LIMIT_ERRORS
         )
         buttons.append([Button.inline(f"Account {phone_number}", f'{{"action":"member_account_details","account_id":{account_id}}}')])
     
@@ -141,7 +138,7 @@ async def send_member_account_details(e, uid, account_id):
         status = "Active"
         if utils.get(account_info, 'is_banned_for_adding'): status = "Banned"
         elif utils.get(account_info, 'flood_wait_until', 0) > time.time(): status = f"Flood Wait (until {utils.fd(utils.get(account_info, 'flood_wait_until', 0) - time.time())})"
-        elif utils.get(account_info, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS: status = "Suspended (too many errors)" # Use config.SOFT_ADD_LIMIT_ERRORS
+        elif utils.get(account_info, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS: status = "Suspended (too many errors)"
     
     text = f"👤 **Account Details: {phone_number}**\n\n" \
            f"Account ID: <code>{account_id}</code>\n" \
@@ -196,7 +193,8 @@ async def send_manage_adding_tasks_menu(e, uid):
 
     text = strings['MANAGE_TASKS_HEADER']
     buttons = []
-    import members_adder # Import here to avoid circular dependency at top level
+    # Import members_adder locally to avoid circular dependency at top level
+    import members_adder 
     for task in tasks:
         task_id = utils.get(task, 'task_id', 'N/A')
         status = utils.get(task, 'status', 'draft')
@@ -305,3 +303,23 @@ async def send_assign_accounts_menu(e, uid, task_id):
     buttons.append([Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
 
     await e.edit(text, buttons=buttons, parse_mode='html')
+
+# This is the original _handle_usr function from bot.py, now inline here
+async def handle_usr(c,e): # Used for main bot login via contact sharing
+    numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
+    await e.delete();m=await e.respond("Requesting OTP...",buttons=None);
+    u=TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info) # Use config here
+    
+    try:
+        await u.connect();owner_data=db.get_user_data(e.chat_id);cr=await u.send_code_request(c.phone_number)
+        ld={'phash':cr.phone_code_hash,'sess':u.session.save(),'clen':cr.type.length}
+        if owner_data:
+            db.update_user_data(owner_data['chat_id'],{'$set':{'ph':c.phone_number,'login':json.dumps(ld)}})
+            await m.edit(strings['ask_code'], buttons=numpad, parse_mode='html', link_preview=False)
+        else:
+            await m.edit("Error: Could not find your user record. Please /start the bot again.")
+    except Exception as ex:
+        # LOGGER.error(f"Error in handle_usr: {ex}") # Add logging
+        await m.edit(f"Error: {ex}")
+    finally:
+        if u.is_connected():await u.disconnect()
