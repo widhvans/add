@@ -1,12 +1,10 @@
 import logging
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-# Import the *instance* named 'config' from the config module
-from config import config # <- IMPORTANT CHANGE
+from config import config # <- IMPORTANT: This imports the instantiated config object
 
 LOGGER = logging.getLogger(__name__)
 
-# Initialize outside to be globally accessible
 mongo_client = None
 users_db = None
 bot_settings_db = None
@@ -14,8 +12,7 @@ bot_settings_db = None
 def init_db():
     global mongo_client, users_db, bot_settings_db
     try:
-        # Use config.MONGODB_URL from the imported instance
-        mongo_client = MongoClient(config.MONGODB_URL, server_api=ServerApi('1')) 
+        mongo_client = MongoClient(config.MONGODB_URL, server_api=ServerApi('1')) # Uses config instance
         users_db = mongo_client.telegram_bot_db.users
         bot_settings_db = mongo_client.telegram_bot_db.bot_settings
         mongo_client.admin.command('ping')
@@ -29,7 +26,6 @@ def close_db():
         mongo_client.close()
         LOGGER.info("MongoDB connection closed.")
 
-# Helper functions for common DB operations
 def get_user_data(user_id):
     return users_db.find_one({"chat_id": user_id})
 
