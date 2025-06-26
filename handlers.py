@@ -64,7 +64,8 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
     if not client or not client.is_connected():
         LOGGER.warning(f"No active client found for user {uid} during login step. Resetting state.")
         db.update_user_data(uid, {"$set": {"state": None}}) # Clear state
-        if account_id: # If there's an associated account, remove incomplete entry
+        # Remove any incomplete account entry if a client was expected but not found/connected
+        if account_id: 
              db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
         if uid in ONGOING_LOGIN_CLIENTS:
             del ONGOING_LOGIN_CLIENTS[uid] # Clean up
@@ -74,13 +75,14 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
     account_info_doc = db.users_db.find_one({"chat_id": uid, "user_accounts.account_id": account_id})
     account_info = next((acc for acc in utils.get(account_info_doc, 'user_accounts', []) if utils.get(acc, 'account_id') == account_id), None)
     
+    # This check is still valid: ensures we have account info and temp_login_data before proceeding
     if not account_info or not utils.get(account_info, 'temp_login_data'):
         LOGGER.warning(f"Account info or temp_login_data missing for account_id {account_id} for user {uid}. Resetting state.")
         db.update_user_data(uid, {"$set": {"state": None}})
         if uid in ONGOING_LOGIN_CLIENTS:
             del ONGOING_LOGIN_CLIENTS[uid]
-        if client.is_connected(): await client.disconnect() # Disconnect the problematic client
-        if account_id: db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}}) # Remove any half-created account
+        if client.is_connected(): await client.disconnect()
+        if account_id: db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
         return await e.respond("Your login data is invalid. Please restart account addition.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
     
     temp_login_data = utils.get(account_info, 'temp_login_data')
@@ -93,7 +95,7 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
     try:
         # Check if awaiting OTP or password
         if utils.get(owner_data, 'state').startswith("awaiting_member_account_code_"):
-            otp_code = input_text.strip().replace(" ", "") # CRITICAL FIX: Clean OTP input (remove spaces)
+            otp_code = input_text.strip().replace(" ", "") # Clean OTP input (remove spaces)
             
             # Validate OTP length if clen is specified and not zero
             if utils.get(temp_login_data, 'clen') and utils.get(temp_login_data, 'clen') != 0 and len(otp_code) != utils.get(temp_login_data, 'clen'):
@@ -107,16 +109,18 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
             await client.sign_in(password=password)
 
         # Login successful if no exception
+        # CRITICAL FIX: Use the new db.update_user_account_in_owner_doc signature
         db.update_user_account_in_owner_doc(
             uid, account_id,
-            {"$set": {
-                "user_accounts.$.session_string": client.session.save(), # Save the *final* session string
-                "user_accounts.$.logged_in": True,
-                "user_accounts.$.last_login_time": time.time(),
-                "user_accounts.$.is_active_for_adding": True,
-                "user_accounts.$.temp_login_data": {} # Clear temp data
-            }, "$unset": {"state": 1}} # Clear owner's state
+            update_fields_dict={ # Pass a dictionary of fields to update within the array element
+                "user_accounts.$[account].session_string": client.session.save(),
+                "user_accounts.$[account].logged_in": True,
+                "user_accounts.$[account].last_login_time": time.time(),
+                "user_accounts.$[account].is_active_for_adding": True,
+                "user_accounts.$[account].temp_login_data": {} # Clear temp data
+            }
         )
+        db.update_user_data(uid, {"$unset": {"state": 1}}) # Clear owner's state
         members_adder.USER_CLIENTS[account_id] = client # Add to active clients for member adding
         if uid in ONGOING_LOGIN_CLIENTS:
             del ONGOING_LOGIN_CLIENTS[uid] # Remove client from temporary storage once login is complete
@@ -128,7 +132,14 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
     except SessionPasswordNeededError:
         LOGGER.info(f"2FA required for account {account_id}.")
         await processing_msg.delete()
-        db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}", "user_accounts.$.temp_login_data.need_pass": True}})
+        # CRITICAL FIX: Use the new db.update_user_account_in_owner_doc signature
+        db.update_user_account_in_owner_doc(
+            uid, account_id,
+            update_fields_dict={
+                "user_accounts.$[account].temp_login_data.need_pass": True
+            }
+        )
+        db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}"}})
         await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
     except (PhoneCodeInvalidError, PasswordHashInvalidError) as ex:
         LOGGER.warning(f"Login failed for account {account_id} with invalid credentials: {ex}")
@@ -157,9 +168,8 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         
         await e.respond(strings['ACCOUNT_LOGIN_FAILED'].format(error_message=ex), buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
     finally:
-        # Do NOT disconnect client here if successful (it's now in members_adder.USER_CLIENTS)
-        # If it's a 2FA step, it also stays connected.
-        # Only disconnect if an unhandled exception occurred, and it wasn't already cleaned up.
+        # Do NOT disconnect client here if successful or if 2FA is needed.
+        # It's managed by ONGOING_LOGIN_CLIENTS.
         pass
 
 
@@ -212,14 +222,17 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
 
         elif current_state.startswith("awaiting_member_account_relogin_phone_"): # Re-login flow
             # For re-login, we assume the account_id_for_db_update is valid
-            db.update_user_account_in_owner_doc(uid, account_id_for_db_update,
-                {"$set": {"user_accounts.$.temp_login_data": {
-                    'phash': code_request.phone_code_hash,
-                    'sess': client.session.save(),
-                    'clen': code_request.type.length,
-                    'code_ok': False,
-                    'need_pass': False
-                }}}
+            db.update_user_account_in_owner_doc(
+                uid, account_id_for_db_update,
+                update_fields_dict={
+                    "user_accounts.$[account].temp_login_data": {
+                        'phash': code_request.phone_code_hash,
+                        'sess': client.session.save(),
+                        'clen': code_request.type.length,
+                        'code_ok': False,
+                        'need_pass': False
+                    }
+                }
             )
         
         db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_code_{account_id_for_db_update}"}})
@@ -520,8 +533,6 @@ def register_all_handlers(bot_client_instance):
                         popup_text = strings['TASK_TARGET_UNSET'].format(task_id=task_id, chat_title=await members_adder.get_chat_title(_bot_client_instance, chat_id))
                     elif len(target_chats) < 2:
                         target_chats.append(chat_id)
-                        popup_text = strings['TASK_TARGET_SET_MULTI'].format(task_id=task_id, chat_title=await members_adder.get_chat_title(_bot_client_instance, chat_id))
-                    else:
                         popup_text = strings['AF_ERROR_TO_FULL']
                         return await e.answer(utils.strip_html(popup_text), alert=True)
                     
