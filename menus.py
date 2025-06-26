@@ -1,0 +1,304 @@
+from telethon.tl.custom.button import Button
+import datetime
+import time
+import config
+import utils # Import utility functions
+import db # Import database module
+from strings import strings
+
+# This `bot_client` will be passed from bot.py when registering handlers.
+# It represents the main TelegramClient for the bot itself.
+bot_client = None
+
+def set_bot_client(client):
+    global bot_client
+    bot_client = client
+
+def yesno(c):
+    return [[Button.inline("Yes", f'{{"action":"yes_{c}"}}')], [Button.inline("No", f'{{"action":"no_{c}"}}')]]
+
+async def check_fsub(e):
+    # This remains in menus.py as it generates a menu/message for force sub
+    if not config.FORCE_SUB_CHANNEL or e.sender_id == config.OWNER_ID:
+        return True
+    c = config.FORCE_SUB_CHANNEL
+    if isinstance(c, str) and c.lstrip('-').isdigit():
+        c = int(c)
+    try:
+        await bot_client.get_permissions(c, e.sender_id)
+        return True
+    except UserNotParticipantError:
+        try:
+            ce = await bot_client.get_entity(c)
+            cl = f"https://t.me/{ce.username}"
+        except:
+            cl = "https://t.me/"
+        btns = [[Button.url("Join Channel", cl)], [Button.inline("I have Joined, Retry", data=f'{{"action":"retry_fsub"}}')]]
+        await e.respond(strings['FSUB_MESSAGE'], buttons=btns, parse_mode='html')
+        return False
+    except Exception as ex:
+        # LOGGER.error(f"F-Sub Error for channel '{c}': {ex}") # LOGGER not imported here
+        return True
+
+async def send_start_menu(e):
+    s = await e.get_sender()
+    st = strings['START_TEXT'].format(user_firstname=s.first_name)
+    btns = [
+        [Button.inline("Help 💡", data='{"action":"help"}'), Button.inline("Commands 📋", data='{"action":"commands"}')],
+        [Button.inline("Tutorial 🎬", data='{"action":"show_tutorial"}'), Button.url("Updates Channel 📢", url=config.UPDATES_CHANNEL_URL)]
+    ]
+    await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='html')
+
+async def send_help_menu(e):
+    await e.edit(strings['HELP_TEXT_FEATURES'],
+                     buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                     parse_mode='html')
+
+async def send_commands_menu(e):
+    await e.edit(strings['COMMANDS_TEXT'],
+                     buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                     parse_mode='html')
+
+async def send_settings_menu(e):
+    text = strings['SETTINGS_MENU_TEXT']
+    buttons = [
+        [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')],
+        [Button.inline("📣 Broadcast", data='{"action":"user_broadcast"}')],
+        [Button.inline("« Back to Main", data='{"action":"main_menu"}')]
+    ]
+    await e.edit(text, buttons=buttons, parse_mode='html')
+
+async def send_members_adding_menu(e, uid):
+    text = "👥 **Members Adding Bot Settings**\n\n" \
+           "Here you can manage your accounts for adding members and set up adding tasks."
+    buttons = [
+        [Button.inline("➕ Add Account", data='{"action":"add_member_account"}')],
+        [Button.inline("📝 Manage Accounts", data='{"action":"manage_member_accounts"}')],
+        [Button.inline("➕ Create Task", data='{"action":"create_adding_task"}')],
+        [Button.inline("⚙️ Manage Tasks", data='{"action":"manage_adding_tasks"}')],
+        [Button.inline("« Back", data='{"action":"settings"}')]
+    ]
+    await e.edit(text, buttons=buttons, parse_mode='html')
+
+async def display_member_accounts(e, uid):
+    owner_data = db.get_user_data(uid)
+    accounts = owner_data.get('user_accounts', [])
+    if not accounts:
+        return await e.edit(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+
+    text = strings['MY_ACCOUNTS_HEADER']
+    buttons = []
+    for account in accounts:
+        account_id = account.get('account_id', 'N/A')
+        phone_number = account.get('phone_number', 'N/A')
+        status = strings['ACCOUNT_STATUS_INACTIVE']
+        
+        if account.get('logged_in'):
+            status = strings['ACCOUNT_STATUS_HEALTHY']
+            if account.get('is_banned_for_adding'):
+                status = strings['ACCOUNT_STATUS_SUSPENDED'].format(reason="Banned")
+            elif account.get('flood_wait_until', 0) > time.time():
+                remaining_time = int(account['flood_wait_until'] - time.time())
+                status = strings['ACCOUNT_STATUS_FLOODED'].format(until_time=utils.fd(remaining_time))
+            elif account.get('soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS:
+                status = strings['ACCOUNT_STATUS_SUSPENDED'].format(reason="Too many errors")
+        else:
+            status = strings['ACCOUNT_STATUS_INVALID']
+
+        daily_adds = account.get('daily_adds_count', 0)
+        soft_errors = account.get('soft_error_count', 0)
+        
+        text += strings['ACCOUNT_STATUS_ENTRY'].format(
+            phone_number=phone_number,
+            account_id=account_id,
+            status=status,
+            daily_adds=daily_adds,
+            limit=config.MAX_DAILY_ADDS_PER_ACCOUNT,
+            soft_errors=soft_errors,
+            soft_limit=config.SOFT_ADD_LIMIT_ERRORS
+        )
+        buttons.append([Button.inline(f"Account {phone_number}", f'{{"action":"member_account_details","account_id":{account_id}}}')])
+    
+    buttons.append([Button.inline("« Back", '{"action":"members_adding_menu"}')])
+    await e.edit(text, buttons=buttons, parse_mode='html')
+
+async def send_member_account_details(e, uid, account_id):
+    owner_data = db.get_user_data(uid)
+    account_info = utils.get(owner_data, 'user_accounts', [])
+    account_info = next((acc for acc in account_info if acc.get('account_id') == account_id), None)
+
+    if not account_info:
+        return await e.answer("Account not found.", alert=True)
+    
+    phone_number = account_info.get('phone_number', 'N/A')
+    status = "Inactive"
+    if account_info.get('logged_in'):
+        status = "Active"
+        if account_info.get('is_banned_for_adding'): status = "Banned"
+        elif account_info.get('flood_wait_until', 0) > time.time(): status = f"Flood Wait (until {utils.fd(account_info['flood_wait_until'] - time.time())})"
+        elif account_info.get('soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS: status = "Suspended (too many errors)"
+    
+    text = f"👤 **Account Details: {phone_number}**\n\n" \
+           f"Account ID: <code>{account_id}</code>\n" \
+           f"Status: {status}\n" \
+           f"Logged In: {'Yes' if account_info.get('logged_in') else 'No'}\n" \
+           f"Daily Adds: {account_info.get('daily_adds_count', 0)} / {config.MAX_DAILY_ADDS_PER_ACCOUNT}\n" \
+           f"Soft Errors Today: {account_info.get('soft_error_count', 0)} / {config.SOFT_ADD_LIMIT_ERRORS}\n" \
+           f"Last Login: {datetime.datetime.fromtimestamp(account_info['last_login_time']).strftime('%Y-%m-%d %H:%M:%S UTC') if account_info.get('last_login_time') else 'N/A'}\n" \
+           f"Last Error: {account_info.get('error_type', 'None')}\n"
+           
+    buttons = [
+        [Button.inline("Re-login Account", f'{{"action":"relogin_member_account","account_id":{account_id}}}')],
+        [Button.inline("Toggle Ban Status", f'{{"action":"toggle_member_account_ban","account_id":{account_id}}}')],
+        [Button.inline("Delete Account", f'{{"action":"confirm_delete_member_account","account_id":{account_id}}}')],
+        [Button.inline("« Back", data='{"action":"manage_member_accounts"}')]
+    ]
+    await e.edit(text, buttons=buttons, parse_mode='html')
+
+
+async def send_create_adding_task_menu(e, uid):
+    owner_data = db.get_user_data(uid)
+    existing_tasks = utils.get(owner_data, 'adding_tasks', [])
+    next_task_id = 1
+    if existing_tasks:
+        max_task_id = max(task.get('task_id', 0) for task in existing_tasks)
+        next_task_id = max_task_id + 1
+
+    new_task = {
+        "task_id": next_task_id,
+        "is_active": False,
+        "status": "draft",
+        "source_chat_id": None,
+        "target_chat_ids": [],
+        "assigned_accounts": [],
+        "current_member_index": 0,
+        "added_members_count": 0,
+        "last_progress_message_id": None
+    }
+    db.update_user_data(uid, {"$push": {"adding_tasks": new_task}})
+    
+    await send_adding_task_details_menu(e, uid, next_task_id)
+
+
+async def send_manage_adding_tasks_menu(e, uid):
+    owner_data = db.get_user_data(uid)
+    tasks = utils.get(owner_data, 'adding_tasks', [])
+    
+    if not tasks:
+        text = "You have no adding tasks yet. Use '➕ Create Task' to add one."
+        buttons = [[Button.inline("« Back", data='{"action":"members_adding_menu"}')]]
+        return await e.edit(text, buttons=buttons, parse_mode='html')
+
+    text = strings['MANAGE_TASKS_HEADER']
+    buttons = []
+    # This import is necessary here to get chat titles
+    import members_adder 
+    for task in tasks:
+        task_id = utils.get(task, 'task_id', 'N/A')
+        status = utils.get(task, 'status', 'draft')
+        
+        status_text = strings[f'TASK_STATUS_{status.upper()}']
+        
+        source_chat_title = "Not Set"
+        if utils.get(task, 'source_chat_id'):
+            try: source_chat_title = await members_adder.get_chat_title(bot_client, task['source_chat_id'])
+            except: pass
+        
+        target_chat_titles = []
+        for chat_id in utils.get(task, 'target_chat_ids', []):
+            try: target_chat_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
+            except: pass
+        target_chat_info = ", ".join(target_chat_titles) if target_chat_titles else "Not Set"
+
+        num_accounts = len(utils.get(task, 'assigned_accounts', []))
+
+        text += strings['TASK_ENTRY_INFO'].format(
+            task_id=task_id,
+            status=status_text,
+            source_chat_title=source_chat_title,
+            target_chat_titles=target_chat_info,
+            num_accounts=num_accounts
+        ) + "\n"
+        buttons.append([Button.inline(f"Task {task_id} - {status_text}", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')])
+
+    buttons.append([Button.inline("« Back", data='{"action":"members_adding_menu"}')])
+    await e.edit(text, buttons=buttons, parse_mode='html')
+
+async def send_adding_task_details_menu(e, uid, task_id):
+    owner_data = db.get_user_data(uid)
+    task = db.get_task_in_owner_doc(uid, task_id)
+    if not task: return await e.answer("Task not found.", alert=True)
+
+    status_text = strings[f'TASK_STATUS_{utils.get(task, "status", "draft").upper()}']
+
+    source_chat_info = "Not Set"
+    import members_adder # Import here to avoid circular dependency
+    if utils.get(task, 'source_chat_id'):
+        try: source_chat_info = await members_adder.get_chat_title(bot_client, task['source_chat_id'])
+        except: source_chat_info = f"ID: <code>{task['source_chat_id']}</code>"
+    
+    target_chat_titles = []
+    for chat_id in utils.get(task, 'target_chat_ids', []):
+        try: target_chat_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
+        except: target_chat_titles.append(f"ID: <code>{chat_id}</code>")
+    target_chat_info = ", ".join(target_chat_titles) if target_chat_titles else "Not Set"
+
+    assigned_accounts_info = []
+    for acc_id in utils.get(task, 'assigned_accounts', []):
+        acc_info = db.find_user_account_in_owner_doc(uid, acc_id)
+        if acc_info:
+            assigned_accounts_info.append(f"<code>{utils.get(acc_info, 'phone_number', f'ID: {acc_id}')}</code>")
+    assigned_accounts_display = ", ".join(assigned_accounts_info) if assigned_accounts_info else "None"
+
+    total_added_members = utils.get(task, 'added_members_count', 0)
+
+    text = strings['TASK_DETAILS_HEADER'].format(
+        task_id=task_id,
+        status=status_text,
+        source_chat_info=source_chat_info,
+        target_chat_info=target_chat_info,
+        assigned_accounts_info=assigned_accounts_display,
+        total_added=total_added_members
+    )
+
+    buttons = [
+        [Button.inline("📤 Set Source Chat", f'm_add_set|from|{task_id}|1')],
+        [Button.inline("📥 Set Target Chat(s)", f'm_add_set|to|{task_id}|1')],
+        [Button.inline("👥 Assign Accounts", f'{{"action":"assign_accounts_to_task","task_id":{task_id}}}')]
+    ]
+    
+    if utils.get(task, 'status') == 'active':
+        buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
+    elif utils.get(task, 'status') == 'paused' or utils.get(task, 'status') == 'draft' or utils.get(task, 'status') == 'completed':
+        # Only allow starting if source, target, and accounts are set
+        if utils.get(task, 'source_chat_id') and utils.get(task, 'target_chat_ids') and utils.get(task, 'assigned_accounts'):
+            buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
+    
+    buttons.append([Button.inline("🗑️ Delete Task", f'{{"action":"confirm_delete_adding_task","task_id":{task_id}}}')])
+    buttons.append([Button.inline("« Back", data='{"action":"manage_adding_tasks"}')])
+    
+    await e.edit(text, buttons=buttons, parse_mode='html')
+
+async def send_assign_accounts_menu(e, uid, task_id):
+    owner_data = db.get_user_data(uid)
+    all_accounts = utils.get(owner_data, 'user_accounts', [])
+    current_task = db.get_task_in_owner_doc(uid, task_id)
+
+    if not current_task: return await e.answer("Task not found.", alert=True)
+    if not all_accounts: return await e.answer(strings['NO_ACCOUNTS_FOR_ADDING'], alert=True)
+
+    assigned_account_ids = utils.get(current_task, 'assigned_accounts', [])
+
+    text = strings['CHOOSE_ACCOUNTS_FOR_TASK'].format(task_id=task_id)
+    buttons = []
+
+    for account in all_accounts:
+        acc_id = utils.get(account, 'account_id')
+        phone_number = utils.get(account, 'phone_number')
+        prefix = "✅ " if acc_id in assigned_account_ids else ""
+        buttons.append([Button.inline(f"{prefix}{phone_number} (ID: {acc_id})", f'm_add_assign_acc|{task_id}|{acc_id}')])
+    
+    buttons.append([Button.inline("Done ✅", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
+    buttons.append([Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
+
+    await e.edit(text, buttons=buttons, parse_mode='html')
