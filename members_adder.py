@@ -2,7 +2,7 @@ import asyncio
 import random
 import time
 import datetime
-import logging # Import logging here
+import logging
 from telethon import TelegramClient, functions
 from telethon.sessions import StringSession
 from telethon.errors import (
@@ -16,14 +16,12 @@ from telethon.errors import (
 from telethon.tl.types import ChannelParticipantsRecent
 from telethon.tl.functions.channels import GetParticipantsRequest
 
-import config
-import db # Import db module
-import utils # Import utils module
+import config # Make sure this line is exactly "import config"
+import db
+import utils
 from strings import strings
 
-LOGGER = logging.getLogger(__name__) # Use LOGGER defined here
-# This `bot_client` will be set by handlers.py on startup.
-# It represents the main TelegramClient for the bot itself.
+LOGGER = logging.getLogger(__name__)
 bot_client = None
 
 def set_bot_client(client):
@@ -34,7 +32,6 @@ def set_bot_client(client):
 ACTIVE_ADDING_TASKS = {}
 USER_CLIENTS = {}
 
-# User Broadcast Function moved here, as it needs `bot_client` and `db` access
 async def run_user_broadcast(uid, message_to_send):
     status_msg = await bot_client.send_message(uid, strings['BROADCAST_STARTED'], parse_mode='html')
     owner_data = db.get_user_data(uid)
@@ -89,10 +86,6 @@ async def run_user_broadcast(uid, message_to_send):
         ), parse_mode='html')
 
 async def get_user_client(user_account_id):
-    """
-    Retrieves or creates a TelegramClient for a given user account (member-adding account).
-    Ensures the client is connected and authorized.
-    """
     if user_account_id in USER_CLIENTS and USER_CLIENTS[user_account_id].is_connected():
         return USER_CLIENTS[user_account_id]
 
