@@ -17,8 +17,6 @@ def set_bot_client(client):
 def yesno(c):
     return [[Button.inline("Yes", f'{{"action":"yes_{c}"}}')], [Button.inline("No", f'{{"action":"no_{c}"}}')]]
 
-# Removed: generate_otp_numpad function as numpad is no longer used for OTP input
-
 async def check_fsub(e):
     if not config.FORCE_SUB_CHANNEL or e.sender_id == config.OWNER_ID:
         return True
@@ -420,7 +418,7 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
             nav_row.append(Button.inline("◀️ Prev", prev_callback))
         
         if total_pages > 0:
-            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop"))
+            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop'))
 
         if page < total_pages:
             next_callback = f'm_add_set|{selection_type}|{task_id}|{page+1}'
