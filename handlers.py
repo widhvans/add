@@ -8,7 +8,7 @@ import re
 from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
 from telethon.tl.custom.button import Button
-from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButtonRequestPhone # Import ReplyKeyboardMarkup and KeyboardButtonRequestPhone
+from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButtonRequestPhone # Ensure these are imported
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
@@ -36,24 +36,34 @@ def set_bot_client_for_modules(client):
 
 # --- Helper functions for this module (handlers.py) ---
 
-# Helper function for main bot user login flow
-async def _handle_main_bot_user_login(contact_obj, event_obj):
-    # For requesting phone, use ReplyKeyboardMarkup
-    request_phone_button = ReplyKeyboardMarkup(
-        [[KeyboardButtonRequestPhone(strings['ask_phone_button'])]], # Use the string for the button text
-        resize=True,
-        one_time=True
-    )
-    # Send a new message with the reply keyboard
-    m = await event_obj.respond(strings['ask_phone_prompt'], buttons=request_phone_button, parse_mode='html') # New string needed
-
-    # The actual login process will continue in the contact_handler.
-    # The current message (m) won't be edited by this function directly.
+# Helper function for main bot user login flow (initiated by /login or shared contact)
+async def _handle_main_bot_user_login_contact_received(contact_obj, event_obj):
+    numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
+    await event_obj.delete() # Delete the message with the phone number button or the contact message itself
     
-    # We might need to delete this temporary message later or rely on Telethon to remove reply keyboards
-    # after the contact is sent. For a cleaner UI, we'll ensure the next step edits or sends new inline menu.
+    m = await event_obj.respond("Requesting OTP...", buttons=None) # Respond with a new message for OTP
 
-# Helper for main bot sign in (called from callback query)
+    u=TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
+    
+    try:
+        await u.connect()
+        owner_data = db.get_user_data(event_obj.chat_id)
+        code_request = await u.send_code_request(contact_obj.phone_number)
+        
+        ld = {'phash':code_request.phone_code_hash,'sess':u.session.save(),'clen':code_request.type.length}
+        if owner_data:
+            # Update owner's login state
+            db.update_user_data(owner_data['chat_id'],{'$set':{'ph':contact_obj.phone_number,'login':json.dumps(ld)}})
+            await m.edit(strings['ask_code'], buttons=numpad, parse_mode='html', link_preview=False)
+        else:
+            await m.edit("Error: Could not find your user record. Please /start the bot again.")
+    except Exception as ex:
+        LOGGER.error(f"Main bot login failed: {ex}")
+        await m.edit(f"Error: {ex}")
+    finally:
+        if u.is_connected(): await u.disconnect()
+
+# Helper for main bot sign in (called from callback query, for OTP/password)
 async def sign_in_main_bot(e):
     owner_data = db.get_user_data(e.chat_id)
     login_data = json.loads(utils.get(owner_data,'login','{}'))
@@ -107,21 +117,21 @@ async def sign_in_main_bot(e):
         if u and u.is_connected(): await u.disconnect()
     return utils.get(s,'logged_in',False)
 
-# Handler for "Add Account" menu option
+# Handler for "Add Account" menu option (for member adding accounts)
 async def handle_add_member_account_flow(e):
     uid = e.sender_id
     db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_phone"}})
     
     # CRITICAL FIX FOR: ValueError: You cannot mix inline with normal buttons
-    # Send *only* the request_phone button as a reply keyboard
+    # Change `one_time=True` to `is_single_use=True`
     request_phone_markup = ReplyKeyboardMarkup(
-        [[KeyboardButtonRequestPhone(strings['share_phone_number_button'])]], # New string for button text
+        [[KeyboardButtonRequestPhone(strings['share_phone_number_button'])]],
         resize=True,
-        one_time=True
+        is_single_use=True # Corrected keyword
     )
+    # Send a new message with the reply keyboard for phone number
     await e.respond(strings['ADD_ACCOUNT_PROMPT'], buttons=request_phone_markup, parse_mode='html')
-    # We no longer send an inline cancel button with the phone request.
-    # User can just ignore or send another command to cancel.
+
 
 # Helper for deleting member account
 async def _handle_delete_member_account(e, uid, account_id):
@@ -191,8 +201,8 @@ def register_all_handlers(bot_client_instance):
         if utils.get(owner_data, 'logged_in'):
             await e.respond(strings['already_logged_in'], parse_mode='html')
         else:
-            # We don't delete e.g., /login command, we respond with phone button
-            await e.respond(strings['ask_phone'], buttons=ReplyKeyboardMarkup([[KeyboardButtonRequestPhone(strings['ask_phone_button'])]], resize=True, one_time=True), parse_mode='html')
+            # Send the phone request as a reply keyboard for the main login
+            await e.respond(strings['ask_phone_prompt'], buttons=ReplyKeyboardMarkup([[KeyboardButtonRequestPhone(strings['ask_phone_button'])]], resize=True, is_single_use=True), parse_mode='html')
 
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/logout", func=lambda e: e.is_private))
@@ -262,7 +272,7 @@ def register_all_handlers(bot_client_instance):
         state = utils.get(owner_data, 'state')
 
         if e.contact.user_id == e.chat_id: # Main bot owner login via contact share
-            await _handle_main_bot_user_login_contact_received(e.contact, e) # Call a specific handler for this
+            await _handle_main_bot_user_login_contact_received(e.contact, e)
         
         elif state and state.startswith(("awaiting_member_account_relogin_phone_", "awaiting_member_account_phone")):
             account_id_match = re.search(r'_(\d+)$', state)
@@ -279,18 +289,17 @@ def register_all_handlers(bot_client_instance):
                 await client.connect()
                 code_request = await client.send_code_request(phone_number)
                 
-                # Check if new account or re-login
-                if state == "awaiting_member_account_phone": # New account flow
+                if state == "awaiting_member_account_phone":
                     existing_account_ids = [acc.get('account_id') for acc in utils.get(owner_data, 'user_accounts', []) if utils.get(acc, 'account_id')]
                     new_account_id = 1
                     if existing_account_ids:
                         new_account_id = max(existing_account_ids) + 1
-                    account_id = new_account_id # Set account_id for the new entry
+                    account_id = new_account_id
 
                     new_account_entry = {
                         "account_id": account_id,
                         "phone_number": phone_number,
-                        "session_string": client.session.save(), # Temp session initially
+                        "session_string": client.session.save(),
                         "logged_in": False,
                         "last_login_time": None,
                         "daily_adds_count": 0,
@@ -300,11 +309,9 @@ def register_all_handlers(bot_client_instance):
                         "is_banned_for_adding": False,
                         "flood_wait_until": 0,
                         "error_type": None,
-                        "temp_login_data": {} # Will be populated next
                     }
-                    db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}}) # Add the new account entry
+                    db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}})
                 
-                # Now update the temp_login_data for either new or re-login flow
                 db.update_user_account_in_owner_doc(uid, account_id,
                     {"$set": {"user_accounts.$.temp_login_data": {
                         'phash': code_request.phone_code_hash,
@@ -322,7 +329,6 @@ def register_all_handlers(bot_client_instance):
 
             except Exception as ex:
                 LOGGER.error(f"Error during member account phone submission: {ex}")
-                # If an error occurs during new account add, remove the incomplete entry
                 if state == "awaiting_member_account_phone" and account_id:
                     db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
                 db.update_user_data(uid, {"$set": {"state": None}})
