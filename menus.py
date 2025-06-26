@@ -218,13 +218,14 @@ async def send_create_adding_task_menu(e, uid):
         "task_id": next_task_id,
         "is_active": False,
         "status": "draft",
-        "source_chat_id": None,
-        "target_chat_ids": [], # List of source chats (multiple allowed)
+        "source_chat_ids": [], # List of source chats (multiple allowed)
+        "target_chat_id": None, # Single target chat
         "assigned_accounts": [],
         "current_member_index": 0,
         "added_members_count": 0,
         "last_progress_message_id": None
     }
+    # For now, we still push the draft. Cleanup happens in manage_tasks.
     db.update_user_data(uid, {"$push": {"adding_tasks": new_task}})
     
     await send_adding_task_details_menu(e, uid, next_task_id)
@@ -237,8 +238,8 @@ async def send_manage_adding_tasks_menu(e, uid):
     # CRITICAL FIX: Auto-remove empty draft tasks
     tasks_to_remove_ids = []
     for task in tasks:
-        if not utils.get(task, 'source_chat_id') and \
-           not utils.get(task, 'target_chat_ids') and \
+        if not utils.get(task, 'source_chat_ids') and \
+           not utils.get(task, 'target_chat_id') and \
            not utils.get(task, 'assigned_accounts'):
             tasks_to_remove_ids.append(utils.get(task, 'task_id'))
     
@@ -275,7 +276,7 @@ async def send_manage_adding_tasks_menu(e, uid):
             for chat_id in source_chat_ids:
                 try: source_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
                 except: source_titles.append(f"ID: `{chat_id}`")
-            source_chat_info_display = ", ".join(source_titles) if source_titles else "Not Set"
+            source_chat_info_display = "\n".join(source_titles) # Display as list
 
         target_chat_info_display = "Not Set"
         target_chat_id = utils.get(task, 'target_chat_id') # It's now a single ID
@@ -289,8 +290,8 @@ async def send_manage_adding_tasks_menu(e, uid):
         text += strings['TASK_ENTRY_INFO'].format(
             task_id=task_id,
             status=status_text,
-            source_chat_title=source_chat_info_display, # Changed from source_chat_title
-            target_chat_titles=target_chat_info_display, # Changed from target_chat_titles
+            source_chat_title=source_chat_info_display, # Updated variable name
+            target_chat_titles=target_chat_info_display, # Updated variable name
             num_accounts=num_accounts
         ) + "\n"
         buttons.append([Button.inline(f"Task {task_id} - {status_text}", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')])
@@ -308,17 +309,16 @@ async def send_adding_task_details_menu(e, uid, task_id):
 
     status_text = strings[f'TASK_STATUS_{utils.get(task, "status", "draft").upper()}']
 
-    # Display source chats (multiple)
     source_chat_info_display = "Not Set"
+    import members_adder 
     source_chat_ids = utils.get(task, 'source_chat_ids', [])
     if source_chat_ids:
         source_titles = []
         for chat_id in source_chat_ids:
             try: source_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
             except: source_titles.append(f"ID: `{chat_id}`")
-        source_chat_info_display = "\n".join(source_titles) if source_titles else "Not Set" # Display as list
+        source_chat_info_display = "\n".join(source_titles)
 
-    # Display target chat (single)
     target_chat_info_display = "Not Set"
     target_chat_id = utils.get(task, 'target_chat_id')
     if target_chat_id:
@@ -337,22 +337,22 @@ async def send_adding_task_details_menu(e, uid, task_id):
     text = strings['TASK_DETAILS_HEADER'].format(
         task_id=task_id,
         status=status_text,
-        source_chat_info=source_chat_info_display, # Updated variable name
-        target_chat_info=target_chat_info_display, # Updated variable name
+        source_chat_info=source_chat_info_display,
+        target_chat_info=target_chat_info_display,
         assigned_accounts_info=assigned_accounts_display,
         total_added=total_added_members
     )
 
     buttons = [
-        [Button.inline("📤 Set Source Chat(s)", f'{{"action":"set_task_source_chat","task_id":{task_id}}}')], # Clarified (s)
+        [Button.inline("📤 Set Source Chat(s)", f'{{"action":"set_task_source_chat","task_id":{task_id}}}')],
         [Button.inline("📥 Set Target Chat", f'{{"action":"set_task_target_chat","task_id":{task_id}}}')],
         [Button.inline("👥 Assign Accounts", f'{{"action":"assign_accounts_to_task","task_id":{task_id}}}')]
     ]
     
-    # Only allow starting if source, target, AND accounts are ALL set
     if utils.get(task, 'status') == 'active':
         buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
     elif utils.get(task, 'status') == 'paused' or utils.get(task, 'status') == 'draft' or utils.get(task, 'status') == 'completed':
+        # Only allow start if all required configurations are done
         if utils.get(task, 'source_chat_ids') and utils.get(task, 'target_chat_id') and utils.get(task, 'assigned_accounts'):
             buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
     
@@ -393,7 +393,7 @@ async def send_assign_accounts_menu(e, uid, task_id):
 
 # send_chat_selection_menu is now modified to handle direct ID/username input.
 # It will no longer offer an interactive list of chats for selection.
-async def send_chat_selection_menu(e, uid, selection_type, task_id): # Removed page parameter from this function signature
+async def send_chat_selection_menu(e, uid, selection_type, task_id): # Removed page parameter
     prompt_key = ""
     if selection_type == 'from':
         prompt_key = 'ASK_SOURCE_CHAT_ID'
