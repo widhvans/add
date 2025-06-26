@@ -30,18 +30,18 @@ strings = {
 
     # New strings for member adding accounts
     'ADD_ACCOUNT_NUMBER_PROMPT': "Please send the **phone number(s)** (with country code, e.g., `+919876543210`) of the account(s) you want to add for member management.\n\n"
-                                 "You can send **multiple numbers, one per line**, to add accounts in bulk.", # Concise instruction
-    'share_phone_number_button': "Share Phone Number", # Still kept for consistency but not directly used in new number prompt
-    'ADD_ANOTHER_ACCOUNT_PROMPT': "Account login successful! Would you like to add another account for member management?",
-    'ASK_OTP_PROMPT': "Please enter the OTP you received on that Telegram account.",
-    'ASK_PASSWORD_PROMPT': "Please enter the 2FA password for that Telegram account.",
+                                 "You can send **multiple numbers, one per line**, to add accounts in bulk.",
+    'share_phone_number_button': "Share Phone Number", # Still kept for consistency, but not used in this flow
+    'ADD_ANOTHER_ACCOUNT_PROMPT': "✅ Account login successful! Would you like to add another account for member management?", # Added checkmark
+    'ASK_OTP_PROMPT': "Please enter the **OTP** you received on that Telegram account.", # Made bold
+    'ASK_PASSWORD_PROMPT': "Please enter the **2FA password** for that Telegram account.", # Made bold
     'ACCOUNT_ALREADY_ADDED': "Account with phone number `{phone_number}` is already added.",
 
-    'ACCOUNT_ADDED_SUCCESS': "✅ Account {phone_number} added successfully! Account ID: `{account_id}`", # Markdown for code block
+    'ACCOUNT_ADDED_SUCCESS': "✅ Account {phone_number} added successfully! Account ID: `{account_id}`",
     'ACCOUNT_LOGIN_FAILED': "Login failed for this account. Reason: {error_message}. Please try again or check your credentials.",
     'NO_ACCOUNTS_FOR_ADDING': "You have no member adding accounts logged in yet. Use '➕ Add Account' first.",
     'MY_ACCOUNTS_HEADER': "📊 **Your Member Adding Accounts**\n\n",
-    'ACCOUNT_STATUS_ENTRY': "• Account: `{phone_number}` | ID: `{account_id}`\n" # Markdown for code block
+    'ACCOUNT_STATUS_ENTRY': "• Account: `{phone_number}` | ID: `{account_id}`\n"
                             "  Status: {status}\n"
                             "  Daily Adds: {daily_adds}/{limit}\n"
                             "  Soft Errors: {soft_errors}/{soft_limit}\n",
@@ -78,21 +78,21 @@ strings = {
     'TASK_DELETED': "✅ Task {task_id} deleted successfully.",
     'TASK_COMPLETED': "Task {task_id} completed! All members processed.",
     'TASK_PROGRESS': "Running Task {task_id}: {added_count}/{total_members} added ({progress:.1f}%) using Account {account_id}.",
-    'ADDING_LIMIT_REACHED': "Account `{account_id}` reached its daily adding limit ({limit} members) or encountered too many errors. Suspending for today.", # Markdown for code block
+    'ADDING_LIMIT_REACHED': "Account `{account_id}` reached its daily adding limit ({limit} members) or encountered too many errors. Suspending for today.",
     'NO_ACTIVE_ACCOUNTS_FOR_TASK': "No active or available accounts to continue Task {task_id}. Pausing task.",
     'SCRAPING_MEMBERS': "Scraping members from source chat...",
     'SCRAPING_COMPLETE': "Scraping complete! Found {count} members.",
-    'ADD_SUCCESS': "Added {count} members to {target_chat_title} using account `{account_id}`.", # Markdown for code block
-    'ADD_FAIL': "Failed to add member to {target_chat_title} using account `{account_id}`: {error_message}.", # Markdown for code block
+    'ADD_SUCCESS': "Added {count} members to {target_chat_title} using account `{account_id}`.",
+    'ADD_FAIL': "Failed to add member to {target_chat_title} using account `{account_id}`: {error_message}.",
     'MEMBER_ALREADY_IN_GROUP': "Member is already in the target group. Skipping.",
     'MEMBER_PRIVACY_RESTRICTED': "Member's privacy settings prevent adding. Skipping.",
-    'PEER_FLOOD_DETECTED': "⚠️ **Peer Flood Detected!** Account `{account_id}` has hit a Peer Flood error. Suspending this account for the day to prevent a ban. Please check account activities.", # Markdown bold + code
-    'FLOOD_WAIT_DETECTED': "⏳ Account `{account_id}` is in flood wait for {seconds} seconds. Waiting...", # Markdown code
-    'USER_ACCOUNT_DISCONNECTED': "❌ User account `{account_id}` disconnected or session invalid. Please re-login.", # Markdown code
+    'PEER_FLOOD_DETECTED': "⚠️ **Peer Flood Detected!** Account `{account_id}` has hit a Peer Flood error. Suspending this account for the day to prevent a ban. Please check account activities.",
+    'FLOOD_WAIT_DETECTED': "⏳ Account `{account_id}` is in flood wait for {seconds} seconds. Waiting...",
+    'USER_ACCOUNT_DISCONNECTED': "❌ User account `{account_id}` disconnected or session invalid. Please re-login.",
     'OWNER_ACCOUNT_LOGIN_REQUIRED': "You do not need to login your main account. Please use /addaccount to manage other accounts.",
     'CHOOSE_ACCOUNTS_FOR_TASK': "Select accounts to assign to Task {task_id}. Selected accounts will participate in adding members for this task.",
-    'ACCOUNT_ASSIGNED_TO_TASK': "✅ Account `{account_id}` assigned to Task {task_id}.", # Markdown code
-    'ACCOUNT_UNASSIGNED_FROM_TASK': "☑️ Account `{account_id}` unassigned from Task {task_id}.", # Markdown code
+    'ACCOUNT_ASSIGNED_TO_TASK': "✅ Account `{account_id}` assigned to Task {task_id}.",
+    'ACCOUNT_UNASSIGNED_FROM_TASK': "☑️ Account `{account_id}` unassigned from Task {task_id}.",
     'NO_ACCOUNTS_SELECTED_FOR_TASK': "Please select at least one account for this task.",
     'ACCOUNTS_UPDATED_FOR_TASK': "✅ Accounts updated for Task {task_id}.",
     'QUEUE_FULL_MESSAGE': "⚠️ Your bot owner command queue is full. Please wait.",
@@ -100,7 +100,7 @@ strings = {
     'BROADCAST_STARTED': "Starting broadcast to your main contacts...",
     'BROADCAST_PROGRESS': "Broadcasting... Sent to: {sent_count}/{total_count}, Failed: {failed_count}",
     'BROADCAST_PEER_FLOOD': "⚠️ Peer Flood Error encountered during broadcast. Stopping to prevent account issues.",
-    'BROADCAST_COMPLETE': "<b>Broadcast Complete</b>\n\n- <b>Sent to:</b> <code>{sent_count}</code> users\n- <b>Failed for:</b> <code>{failed_count}</code> users", # This should be HTML, not Markdown, keep it as is.
+    'BROADCAST_COMPLETE': "**Broadcast Complete**\n\n- **Sent to:** `{sent_count}` users\n- **Failed for:** `{failed_count}` users", # Changed to Markdown
     'BROADCAST_MENU_TEXT': "Send me the message you want to broadcast to all your main account's contacts. It can be text or media.",
     'BROADCAST_CANCELLED': "Broadcast cancelled.",
     'TUTORIAL_PROMPT_OWNER': "Please send me the tutorial video. This video will be shown to users when they click 'Tutorial'.",
