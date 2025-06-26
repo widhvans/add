@@ -2,7 +2,9 @@ import logging
 import asyncio
 from telethon import TelegramClient
 
-import config
+# Import the *instance* named 'config' from the config module
+from config import config # <- IMPORTANT CHANGE
+
 import db # Import our new db module
 import handlers # Import our new handlers module
 import menus # Import our new menus module
@@ -14,22 +16,23 @@ LOGGER = logging.getLogger(__name__)
 
 # --- BOT & DEVICE SIMULATION SETUP ---
 BOT_USERNAME = None
-# device_info is now in config.py
-bot = TelegramClient('bot_session', config.API_ID, config.API_HASH)
+# device_info is now accessed via config.device_info
+bot = TelegramClient('bot_session', config.API_ID, config.API_HASH) # Use config.API_ID/HASH
 
 async def main():
     global BOT_USERNAME
     try:
         db.init_db() # Initialize MongoDB connection
         
-        await bot.start(bot_token=config.BOT_TOKEN)
+        await bot.start(bot_token=config.BOT_TOKEN) # Use config.BOT_TOKEN
         me = await bot.get_me()
         BOT_USERNAME = me.username
         LOGGER.info(f"Bot started as @{BOT_USERNAME}.")
         
-        # Pass the main bot client to other modules that need it for sending messages
+        # Pass the main bot client and the config instance to other modules that need them
         handlers.set_bot_client_for_handlers(bot)
-        members_adder.set_bot_client(bot) # Pass the main bot client to members_adder
+        members_adder.set_bot_client(bot)
+        members_adder.set_config_instance(config) # NEW: Pass the config instance to members_adder
         
         LOGGER.info("Initializing member adding clients and tasks...")
         
@@ -71,7 +74,7 @@ async def main():
                 await client.disconnect()
         # Cancel all active adding tasks
         for task_id in list(members_adder.ACTIVE_ADDING_TASKS.keys()):
-            if task_id in members_adder.ACTIVE_ADDING_TASKS:
+            if task_id in members_adder.ACTIVE_TASKS: # Corrected: Use ACTIVE_ADDING_TASKS here
                 members_adder.ACTIVE_ADDING_TASKS[task_id].cancel()
                 del members_adder.ACTIVE_ADDING_TASKS[task_id]
         
