@@ -33,7 +33,7 @@ strings = {
                                  "You can send **multiple numbers, one per line**, to add accounts in bulk.",
     'share_phone_number_button': "Share Phone Number", # Not used anymore
     'ADD_ANOTHER_ACCOUNT_PROMPT': "✅ Account login successful! Would you like to add another account for member management?",
-    'ASK_OTP_PROMPT': "Please enter the **OTP** you received on that Telegram account.",
+    'ASK_OTP_PROMPT': "Please enter the **OTP** (e.g., `12345` or `123 45`) you received on that Telegram account.", # Updated OTP instruction
     'ASK_PASSWORD_PROMPT': "Please enter the **2FA password** for that Telegram account.",
     'ACCOUNT_ALREADY_ADDED': "Account with phone number `{phone_number}` is already added.",
 
