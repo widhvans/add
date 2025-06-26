@@ -24,24 +24,22 @@ class Config:
     # URL for the start image (Optional: Recommended to use a telegra.ph or other direct link)
     START_IMAGE_URL = os.environ.get("START_IMAGE_URL", "https://iili.io/FATfoQV.md.jpg") 
 
-    # **CRITICAL FIX: device_info was missing**
     # Device information for Telethon sessions (mimics a real mobile client)
     device_info = {
-        'device_model': 'Samsung Galaxy S25 Ultra', # You can customize this
-        'system_version': 'SDK 35 (Android 15)', # You can customize this
-        'app_version': '11.5.0 (5124)', # You can customize this
+        'device_model': 'Samsung Galaxy S25 Ultra', 
+        'system_version': 'SDK 35 (Android 15)', 
+        'app_version': '11.5.0 (5124)', 
         'lang_code': 'en',
         'system_lang_code': 'en-US'
     }
 
     # Member Adding Bot specific configurations
-    MAX_DAILY_ADDS_PER_ACCOUNT = int(os.environ.get("MAX_DAILY_ADDS_PER_ACCOUNT", 20)) # Max members to add per account per day
-    # If an account hits this many non-privacy errors, consider it done for the day for adding tasks
+    MAX_DAILY_ADDS_PER_ACCOUNT = int(os.environ.get("MAX_DAILY_ADDS_PER_ACCOUNT", 20)) 
     SOFT_ADD_LIMIT_ERRORS = int(os.environ.get("SOFT_ADD_LIMIT_ERRORS", 15)) 
     
     # Delays for member adding (in seconds)
-    MIN_ADD_DELAY = float(os.environ.get("MIN_ADD_DELAY", 5.0)) # Minimum delay between each add attempt
-    MAX_ADD_DELAY = float(os.environ.get("MAX_ADD_DELAY", 15.0)) # Maximum delay between each add attempt
+    MIN_ADD_DELAY = float(os.environ.get("MIN_ADD_DELAY", 5.0)) 
+    MAX_ADD_DELAY = float(os.environ.get("MAX_ADD_DELAY", 15.0)) 
     
     # Maximum members to scrape from a source chat in one go
     MEMBER_SCRAPE_LIMIT = int(os.environ.get("MEMBER_SCRAPE_LIMIT", 500)) 
