@@ -8,7 +8,17 @@ import handlers
 import menus
 import members_adder
 
+# --- CRITICAL FIX: Logging Setup ---
+# Configure logging to output to console
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO, # Set to INFO to see general bot activity, DEBUG for more detailed messages
+    handlers=[
+        logging.StreamHandler() # This ensures logs go to the console/stdout
+    ]
+)
 LOGGER = logging.getLogger(__name__)
+# --- END Logging Setup ---
 
 BOT_USERNAME = None
 bot = TelegramClient('bot_session', config.API_ID, config.API_HASH)
@@ -16,6 +26,7 @@ bot = TelegramClient('bot_session', config.API_ID, config.API_HASH)
 async def main():
     global BOT_USERNAME
     try:
+        LOGGER.info("Starting bot initialization...")
         db.init_db() # Initialize MongoDB connection
         
         await bot.start(bot_token=config.BOT_TOKEN)
@@ -23,12 +34,10 @@ async def main():
         BOT_USERNAME = me.username
         LOGGER.info(f"Bot started as @{BOT_USERNAME}.")
         
-        # --- CRITICAL FIX HERE ---
-        # Register handlers *after* the bot client is initialized and started
-        handlers.register_all_handlers(bot) 
-        # Pass the config instance to members_adder
+        # Pass the main bot client and the config instance to other modules that need them
+        handlers.set_bot_client_for_modules(bot)
+        members_adder.set_bot_client(bot)
         members_adder.set_config_instance(config)
-        # --- END CRITICAL FIX ---
         
         LOGGER.info("Initializing member adding clients and tasks...")
         
