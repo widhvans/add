@@ -185,6 +185,13 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
     # Hide the keyboard (if any) and send a processing message
     processing_msg = await e.respond(f"Attempting to log in account: **`{phone_number}`**\n\nPlease wait...", buttons=ReplyKeyboardHide(), parse_mode='Markdown')
     
+    # CRITICAL FIX: Ensure the client is new and not reused from a previous failed attempt without cleanup
+    if uid in ONGOING_LOGIN_CLIENTS:
+        client_to_clean = ONGOING_LOGIN_CLIENTS.pop(uid)
+        if client_to_clean.is_connected():
+            await client_to_clean.disconnect()
+            LOGGER.info(f"Cleaned up stale client before new code request for user {uid}")
+
     client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
     try:
         await client.connect()
@@ -387,6 +394,7 @@ def register_all_handlers(bot_client_instance):
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
+            # Hide the reply keyboard using ReplyKeyboardHide directly.
             await e.respond("Processing your request...", buttons=ReplyKeyboardHide(), parse_mode='html')
 
             # Handle existing number (for new add flow only)
@@ -400,7 +408,7 @@ def register_all_handlers(bot_client_instance):
         else:
             await e.respond(strings['wrong_phone'], parse_mode='html')
 
-    # Handles text input which can be OTPs, Passwords, or bulk phone numbers
+    # Handles text input which can be OTPs, Passwords, or bulk phone numbers, AND Chat ID inputs
     @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and e.text and not e.text.startswith('/')))
     async def private_message_handler(e):
         uid = e.sender_id
@@ -467,7 +475,7 @@ def register_all_handlers(bot_client_instance):
                     entity = await _bot_client_instance.get_entity(chat_id_or_username)
                     source_chat_ids.append(entity.id)
                 except Exception as ex:
-                    LOGGER.warning(f"Could not resolve source chat: {chat_input}: {ex}")
+                    LOGGER.warning(f"Could not resolve source chat: {chat_input}: {ex}", exc_info=True)
                     await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input), parse_mode='Markdown')
                     return # Stop process if any chat is invalid
 
@@ -481,7 +489,7 @@ def register_all_handlers(bot_client_instance):
 
         elif state and state.startswith("awaiting_chat_input_target_"):
             task_id = int(state.split('_')[-1])
-            chat_input = e.text.strip()
+            chat_input = e.text.strip() # Target is a single chat
             
             if not chat_input:
                 return await e.respond("Please provide a single target chat ID or username.", parse_mode='Markdown')
@@ -490,7 +498,7 @@ def register_all_handlers(bot_client_instance):
                 entity = await _bot_client_instance.get_entity(chat_input)
                 target_chat_id = entity.id
             except Exception as ex:
-                LOGGER.warning(f"Could not resolve target chat: {chat_input}: {ex}")
+                LOGGER.warning(f"Could not resolve target chat: {chat_input}: {ex}", exc_info=True)
                 await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input), parse_mode='Markdown')
                 return
 
@@ -544,10 +552,11 @@ def register_all_handlers(bot_client_instance):
         raw_data = e.data.decode()
         owner_data = db.get_user_data(uid)
 
+        # Handle 'yes_add_another_account' and 'no_add_another_account' buttons
         if raw_data.startswith("yes_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
             await e.answer("Initiating another account addition...", alert=True) 
-            await handle_add_member_account_flow(e)
+            await handle_add_member_account_flow(e) # Start the flow. It will respond with a new message.
             return 
 
         elif raw_data.startswith("no_add_another_account_"):
@@ -559,11 +568,10 @@ def register_all_handlers(bot_client_instance):
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
 
-        # CRITICAL FIX: Restructured m_add_sc and m_add_set to remove SyntaxError
-        # Handle callbacks for setting Source/Target chats (direct ID input flow)
-        if raw_data.startswith("m_add_set|"): # From "Set Source/Target Chat" buttons in Task Details menu
+        # CRITICAL FIX: Restructured m_add_set callback processing
+        elif raw_data.startswith("m_add_set|"): # From "Set Source/Target Chat" buttons in Task Details menu
             try:
-                _, selection_type, task_id_str = raw_data.split("|") # page_str is no longer part of this action
+                _, selection_type, task_id_str = raw_data.split("|")
                 task_id = int(task_id_str)
                 
                 # This part is now exclusively for setting state for direct chat ID input
@@ -577,9 +585,9 @@ def register_all_handlers(bot_client_instance):
                 
                 await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
             except Exception as ex:
-                LOGGER.error(f"Error processing compact callback 'm_add_set': {ex}", exc_info=True)
+                LOGGER.error(f"Error processing callback 'm_add_set': {ex}", exc_info=True)
                 await e.answer("An error occurred. Please try again.", alert=True)
-            return # IMPORTANT: Return after handling this callback
+            return # IMPORTANT: Always return after processing a unique callback type.
 
         elif raw_data.startswith("m_add_assign_acc|"):
             try:
