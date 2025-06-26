@@ -1,7 +1,7 @@
 import logging
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from config import config # <- IMPORTANT: This imports the instantiated config object
+from config import config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -12,11 +12,20 @@ bot_settings_db = None
 def init_db():
     global mongo_client, users_db, bot_settings_db
     try:
-        mongo_client = MongoClient(config.MONGODB_URL, server_api=ServerApi('1')) # Uses config instance
-        users_db = mongo_client.telegram_bot_db.users
-        bot_settings_db = mongo_client.telegram_bot_db.bot_settings
+        mongo_client = MongoClient(config.MONGODB_URL, server_api=ServerApi('1'))
+
+        # --- UNIQUE COLLECTION NAME FIX ---
+        # Derive a unique database name based on the bot token for isolation
+        # Using a simple hash/identifier from the token to ensure uniqueness
+        unique_db_identifier = config.BOT_TOKEN.split(':')[0] # Use part of the bot token as an identifier
+        db_name = f"telegram_bot_db_{unique_db_identifier}"
+
+        users_db = mongo_client[db_name].users
+        bot_settings_db = mongo_client[db_name].bot_settings
+        # --- END UNIQUE COLLECTION NAME FIX ---
+
         mongo_client.admin.command('ping')
-        LOGGER.info("Successfully connected to MongoDB.")
+        LOGGER.info(f"Successfully connected to MongoDB. Using database: {db_name}")
     except Exception as e:
         LOGGER.critical(f"CRITICAL ERROR: Failed to connect to MongoDB: {e}. Exiting.")
         exit(1)
@@ -26,6 +35,7 @@ def close_db():
         mongo_client.close()
         LOGGER.info("MongoDB connection closed.")
 
+# Helper functions for common DB operations
 def get_user_data(user_id):
     return users_db.find_one({"chat_id": user_id})
 
