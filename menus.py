@@ -39,7 +39,7 @@ async def check_fsub(e):
         pass
         return True
 
-async def send_main_menu(e): # NEW: Main menu for the bot's simplified interface
+async def send_main_menu(e): # Main menu for the bot's simplified interface
     s = await e.get_sender()
     st = strings['START_TEXT'].format(user_firstname=s.first_name)
     btns = [
@@ -51,6 +51,7 @@ async def send_main_menu(e): # NEW: Main menu for the bot's simplified interface
         await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='html')
 
 async def send_help_menu(e):
+    # This function expects `e` to be an editable message
     try:
         await e.edit(strings['HELP_TEXT_FEATURES'],
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
@@ -61,6 +62,7 @@ async def send_help_menu(e):
                          parse_mode='html')
 
 async def send_commands_menu(e):
+    # This function expects `e` to be an editable message
     try:
         await e.edit(strings['COMMANDS_TEXT'],
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
@@ -71,6 +73,7 @@ async def send_commands_menu(e):
                          parse_mode='html')
 
 async def send_settings_menu(e): # This is the main members adding dashboard now
+    # This function expects `e` to be an editable message
     text = strings['SETTINGS_MENU_TEXT']
     buttons = [
         [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')], # This is a placeholder for the menu title
@@ -81,6 +84,7 @@ async def send_settings_menu(e): # This is the main members adding dashboard now
         await e.edit(text, buttons=buttons, parse_mode='html')
     except Exception:
         await e.respond(text, buttons=buttons, parse_mode='html')
+
 
 async def send_members_adding_menu(e, uid):
     text = "👥 **Members Adding Bot Settings**\n\n" \
@@ -210,18 +214,27 @@ async def send_manage_adding_tasks_menu(e, uid):
     owner_data = db.get_user_data(uid)
     tasks = utils.get(owner_data, 'adding_tasks', [])
     
-    if not tasks:
-        text = "You have no adding tasks yet. Use '➕ Create Task' to add one."
+    # CRITICAL FIX: Only show tasks that are not fully draft (i.e., have some configuration)
+    # Or, if there are NO non-draft tasks, then show all tasks including drafts (first time setup)
+    configured_tasks = [t for t in tasks if utils.get(t, 'source_chat_id') or utils.get(t, 'target_chat_ids') or utils.get(t, 'assigned_accounts')]
+    
+    if not configured_tasks and tasks: # If there are tasks, but none are configured, show all.
+        display_tasks = tasks
+    else: # Otherwise, only show configured tasks
+        display_tasks = configured_tasks
+
+    if not display_tasks:
+        text = "You have no configured adding tasks yet. Use '➕ Create Task' to add and configure one."
         buttons = [[Button.inline("« Back", data='{"action":"members_adding_menu"}')]]
         try:
             return await e.edit(text, buttons=buttons, parse_mode='html')
         except Exception:
             return await e.respond(text, buttons=buttons, parse_mode='html')
 
-    text = strings['MANAGE_TASKS_HEADER']
+    text = strings['MANAGE_TASKS_HEADER'] # This header is now used only when displaying actual tasks
     buttons = []
     import members_adder 
-    for task in tasks:
+    for task in display_tasks:
         task_id = utils.get(task, 'task_id', 'N/A')
         status = utils.get(task, 'status', 'draft')
         
