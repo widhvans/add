@@ -8,7 +8,7 @@ import re
 from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
 from telethon.tl.custom.button import Button
-# Removed: ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestPhone imports as they are not used in new flow
+from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestPhone
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
@@ -39,10 +39,80 @@ def set_bot_client_for_modules(client):
 # Helper for "Add Account" menu option (for member adding accounts)
 async def handle_add_member_account_flow(e):
     uid = e.sender_id
-    db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_number"}}) # New state
+    db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_number"}})
     
     # Directly ask for numbers, no reply keyboard
     await e.respond(strings['ADD_ACCOUNT_NUMBER_PROMPT'], parse_mode='html')
+
+
+# Centralized helper for handling OTP/Password input and login attempt for member accounts
+async def _handle_member_account_login_step(e, uid, account_id, input_text):
+    owner_data = db.get_user_data(uid)
+    account_info_doc = db.users_db.find_one({"chat_id": uid, "user_accounts.account_id": account_id})
+    if not account_info_doc:
+        return await e.respond("Invalid account data. Please try adding account again.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+    
+    account_info = next((acc for acc in utils.get(account_info_doc, 'user_accounts', []) if utils.get(acc, 'account_id') == account_id), None)
+    if not account_info or not utils.get(account_info, 'temp_login_data'):
+        return await e.respond("Invalid login state. Please try adding account again.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+    
+    temp_login_data = utils.get(account_info, 'temp_login_data')
+    phone_number = utils.get(temp_login_data, 'ph')
+    phone_code_hash = utils.get(temp_login_data, 'phash')
+    session_string_temp = utils.get(temp_login_data, 'sess')
+    
+    client = TelegramClient(StringSession(session_string_temp), config.API_ID, config.API_HASH, **config.device_info)
+
+    try:
+        await client.connect()
+        
+        # Check if awaiting OTP or password
+        if utils.get(owner_data, 'state').startswith("awaiting_member_account_code_"):
+            otp_code = input_text.strip()
+            # Ensure OTP length matches expected length if available
+            if utils.get(temp_login_data, 'clen') and len(otp_code) != utils.get(temp_login_data, 'clen'):
+                numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
+                return await e.respond(strings['code_invalid'] + "\n" + strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
+
+            await client.sign_in(phone=phone_number, code=otp_code, phone_code_hash=phone_code_hash)
+            
+        elif utils.get(owner_data, 'state').startswith("awaiting_member_account_password_"):
+            password = input_text.strip()
+            await client.sign_in(password=password)
+
+        # Login successful if no exception
+        db.update_user_account_in_owner_doc(
+            uid, account_id,
+            {"$set": {
+                "user_accounts.$.session_string": client.session.save(),
+                "user_accounts.$.logged_in": True,
+                "user_accounts.$.last_login_time": time.time(),
+                "user_accounts.$.is_active_for_adding": True,
+                "user_accounts.$.temp_login_data": {}
+            }, "$unset": {"state": 1}}
+        )
+        members_adder.USER_CLIENTS[account_id] = client
+        await e.respond(strings['ACCOUNT_ADDED_SUCCESS'].format(phone_number=phone_number, account_id=account_id), parse_mode='html')
+        await e.respond(strings['ADD_ANOTHER_ACCOUNT_PROMPT'], buttons=menus.yesno(f"add_another_account_{account_id}"), parse_mode='html')
+
+    except SessionPasswordNeededError:
+        db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}", "user_accounts.$.temp_login_data.need_pass": True}})
+        await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
+    except PhoneCodeInvalidError:
+        await e.respond(strings['code_invalid'], parse_mode='html')
+        numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
+        await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
+    except PasswordHashInvalidError:
+        await e.respond(strings['pass_invalid'], parse_mode='html')
+        await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
+    except Exception as ex:
+        LOGGER.error(f"Error during member account login: {ex}")
+        db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.logged_in": False, "user_accounts.$.is_active_for_adding": False, "user_accounts.$.temp_login_data": {}}})
+        db.update_user_data(uid, {"$unset": {"state": 1}})
+        await e.respond(strings['ACCOUNT_LOGIN_FAILED'].format(error_message=ex), buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+    finally:
+        if client.is_connected() and not utils.get(account_info, 'logged_in'):
+            await client.disconnect()
 
 
 # Helper for deleting member account
@@ -90,17 +160,7 @@ def register_all_handlers(bot_client_instance):
             })
         await menus.send_main_menu(e) # Direct to main menu with "Lets Go" button
 
-    @_bot_client_instance.on(events.NewMessage(pattern=r"/help", func=lambda e: e.is_private))
-    async def help_command_handler(e):
-        await menus.send_help_menu(e)
-
-    @_bot_client_instance.on(events.NewMessage(pattern=r"/commands", func=lambda e: e.is_private))
-    async def commands_command_handler(e):
-        await menus.send_commands_menu(e)
-
-    @_bot_client_instance.on(events.NewMessage(pattern=r"/settings", func=lambda e: e.is_private))
-    async def settings_command_handler(e):
-        await menus.send_settings_menu(e)
+    # Removed: /help, /commands, /settings, /login, /logout commands (as per user request)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/addaccount", func=lambda e: e.is_private))
     async def add_member_account_command_handler(e):
@@ -151,84 +211,61 @@ def register_all_handlers(bot_client_instance):
             return
         await e.respond("This bot is dedicated to member adding. Please use the menu or commands like /addaccount to manage accounts.")
 
-    # Modified: Contact handler now directly processes numbers from text if in state
+    # Modified: contact_handler now only handles shared contacts for member-adding accounts
     @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and e.contact))
     async def contact_handler(e):
         uid = e.sender_id
         owner_data = db.get_user_data(uid)
         state = utils.get(owner_data, 'state')
 
-        # This block now handles the shared contact for member-adding accounts
-        if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_number")): # Changed to awaiting_member_account_number
-            account_id_match = re.search(r'_(\d+)$', state) # This might not exist for new number
-            account_id = int(account_id_match.group(1)) if account_id_match else None
+        if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_number")):
+            account_id_match = re.search(r'_(\d+)$', state)
+            account_id = int(account_id_match.group(1)) if account_id_match else None # account_id can be None for initial number input
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
-            # Hide the reply keyboard by sending an empty one
+            # Hide the reply keyboard after receiving contact
             await e.respond("Processing account...", reply_markup=ReplyKeyboardMarkup(rows=[], selective=True, resize_keyboard=True), parse_mode='html')
 
-            # Handle existing number
+            # Handle existing number (for new add flow only)
             if state == "awaiting_member_account_number" and any(acc.get('phone_number') == phone_number for acc in utils.get(owner_data, 'user_accounts', [])):
                 db.update_user_data(uid, {"$set": {"state": None}})
                 return await e.respond(strings['ACCOUNT_ALREADY_ADDED'].format(phone_number=phone_number), buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
 
-            client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
-            try:
-                await client.connect()
-                code_request = await client.send_code_request(phone_number)
-                
-                if state == "awaiting_member_account_number": # New account flow
-                    existing_account_ids = [utils.get(acc, 'account_id') for acc in utils.get(owner_data, 'user_accounts', []) if utils.get(acc, 'account_id')]
-                    new_account_id = 1
-                    if existing_account_ids:
-                        new_account_id = max(existing_account_ids) + 1
-                    account_id = new_account_id
+            # Get or create account_id for temporary login data handling
+            if state == "awaiting_member_account_number": # New account flow
+                existing_account_ids = [utils.get(acc, 'account_id') for acc in utils.get(owner_data, 'user_accounts', []) if utils.get(acc, 'account_id')]
+                new_account_id = 1
+                if existing_account_ids:
+                    new_account_id = max(existing_account_ids) + 1
+                account_id = new_account_id
 
-                    new_account_entry = {
-                        "account_id": account_id,
-                        "phone_number": phone_number,
-                        "session_string": client.session.save(),
-                        "logged_in": False,
-                        "last_login_time": None,
-                        "daily_adds_count": 0,
-                        "soft_error_count": 0,
-                        "last_add_date": None,
-                        "is_active_for_adding": False,
-                        "is_banned_for_adding": False,
-                        "flood_wait_until": 0,
-                        "error_type": None,
-                    }
-                    db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}})
-                
-                db.update_user_account_in_owner_doc(uid, account_id,
-                    {"$set": {"user_accounts.$.temp_login_data": {
-                        'phash': code_request.phone_code_hash,
-                        'sess': client.session.save(),
-                        'clen': code_request.type.length,
-                        'code_ok': False,
-                        'need_pass': False
-                    }}}
-                )
+                new_account_entry = {
+                    "account_id": account_id,
+                    "phone_number": phone_number,
+                    "session_string": None, # Will be set after successful login
+                    "logged_in": False,
+                    "last_login_time": None,
+                    "daily_adds_count": 0,
+                    "soft_error_count": 0,
+                    "last_add_date": None,
+                    "is_active_for_adding": False,
+                    "is_banned_for_adding": False,
+                    "flood_wait_until": 0,
+                    "error_type": None,
+                    "temp_login_data": {} # Will be populated
+                }
+                db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}}) # Add the new account entry to DB
             
-                db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_code_{account_id}"}})
-                
-                numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-                await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
-
-            except Exception as ex:
-                LOGGER.error(f"Error during member account phone submission: {ex}")
-                if state == "awaiting_member_account_number" and account_id:
-                    db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
-                db.update_user_data(uid, {"$set": {"state": None}})
-                await e.respond(f"Failed to process account: {ex}", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
-            finally:
-                if client.is_connected(): await client.disconnect()
+            # Initiate login steps via helper
+            await _initiate_member_account_login_flow(e, uid, account_id, phone_number, state)
+            
         else:
             await e.respond(strings['wrong_phone'], parse_mode='html')
 
+    # Handles text input which can be OTPs, Passwords, or bulk phone numbers
     @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and e.text and not e.text.startswith('/')))
-    async def private_message_handler(e): # Handles OTPs and Passwords, and direct phone number input
+    async def private_message_handler(e):
         uid = e.sender_id
         owner_data = db.get_user_data(uid)
         if not owner_data: return
@@ -239,18 +276,19 @@ def register_all_handlers(bot_client_instance):
         if state == "awaiting_member_account_number":
             phone_numbers_raw = e.text.strip().split('\n')
             
-            # Initiate login for each number, or handle bulk
             for phone_number_raw in phone_numbers_raw:
-                phone_number = phone_number_raw.replace(" ", "") # Clean the phone number
-                if not phone_number.strip(): continue # Skip empty lines
+                phone_number = phone_number_raw.replace(" ", "")
+                if not phone_number.strip() or not re.match(r"^\+\d{10,15}$", phone_number): # Basic validation
+                    await e.respond(f"Skipping invalid phone number: `{phone_number_raw}`. Please use international format `+<countrycode><number>`.", parse_mode='html')
+                    continue
 
                 # Check if this phone number is already added
                 if any(acc.get('phone_number') == phone_number for acc in utils.get(owner_data, 'user_accounts', [])):
                     await e.respond(strings['ACCOUNT_ALREADY_ADDED'].format(phone_number=phone_number), parse_mode='html')
-                    continue # Skip to next number
+                    continue
                 
                 # Initiate login for this single number
-                account_id = None # Will be set after pushing new account
+                account_id = None
                 try:
                     client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
                     await client.connect()
@@ -265,7 +303,7 @@ def register_all_handlers(bot_client_instance):
                     new_account_entry = {
                         "account_id": account_id,
                         "phone_number": phone_number,
-                        "session_string": client.session.save(),
+                        "session_string": None,
                         "logged_in": False,
                         "last_login_time": None,
                         "daily_adds_count": 0,
@@ -292,16 +330,21 @@ def register_all_handlers(bot_client_instance):
                     
                     numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
                     await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
-                    break # Break after initiating first login process, wait for OTP
+                    await asyncio.sleep(0.5) # Small delay for UI if bulk
+                    # For bulk, we initiate one login at a time. The state changes and awaits OTP.
+                    # User needs to send OTP for the current account before next number is processed automatically.
+                    # Or, we can create multiple states/queues, which is more complex.
+                    # For now, we process one, then wait for OTP, then ask if "add another".
+                    break # Break after initiating the first login, wait for OTP
                 except Exception as ex:
                     LOGGER.error(f"Error during phone number input processing for {phone_number}: {ex}")
                     if account_id: # If an incomplete entry was pushed
                         db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
-                    await e.respond(f"Failed to process phone number {phone_number_raw}: {ex}", parse_mode='html')
-                    # Do NOT break here if it's bulk input, continue trying other numbers, unless it's a critical bot error.
+                    await e.respond(f"Failed to process phone number `{phone_number_raw}`: {ex}", parse_mode='html')
             
-            if not phone_numbers_raw: # If no valid numbers were found
-                 await e.respond("No valid phone numbers provided. Please send numbers in international format, one per line.", parse_mode='html')
+            # If after processing all, no valid login was initiated
+            if not any(re.match(r"^\+\d{10,15}$", p.replace(" ", "")) for p in phone_numbers_raw if p.strip()):
+                await e.respond("No valid phone numbers provided. Please send numbers in international format, one per line.", parse_mode='html')
             
             return # Exit handler after processing phone number input
 
@@ -310,91 +353,10 @@ def register_all_handlers(bot_client_instance):
             asyncio.create_task(members_adder.run_user_broadcast(uid, e.message))
         elif state and state.startswith("awaiting_member_account_code_"):
             account_id = int(state.split('_')[-1])
-            account_info_doc = db.users_db.find_one({"chat_id": uid, "user_accounts.account_id": account_id})
-            if not account_info_doc: return await e.respond("Invalid state for OTP. Please try adding account again.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
-            account_info = next((acc for acc in utils.get(account_info_doc, 'user_accounts', []) if utils.get(acc, 'account_id') == account_id), None)
-            if not account_info or not utils.get(account_info, 'temp_login_data'):
-                return await e.respond("Invalid state for OTP. Please try adding account again.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
-            
-            temp_login_data = utils.get(account_info, 'temp_login_data')
-            phone_number = utils.get(temp_login_data, 'ph')
-            phone_code_hash = utils.get(temp_login_data, 'phash')
-            session_string_temp = utils.get(temp_login_data, 'sess')
-            otp_code = e.text.strip()
-
-            client = TelegramClient(StringSession(session_string_temp), config.API_ID, config.API_HASH, **config.device_info)
-            try:
-                await client.connect()
-                await client.sign_in(phone=phone_number, code=otp_code, phone_code_hash=phone_code_hash)
-                
-                db.update_user_account_in_owner_doc(
-                    uid, account_id,
-                    {"$set": {
-                        "user_accounts.$.session_string": client.session.save(),
-                        "user_accounts.$.logged_in": True,
-                        "user_accounts.$.last_login_time": time.time(),
-                        "user_accounts.$.is_active_for_adding": True,
-                        "user_accounts.$.temp_login_data": {}
-                    }, "$unset": {"state": 1}}
-                )
-                members_adder.USER_CLIENTS[account_id] = client
-                await e.respond(strings['ADD_ANOTHER_ACCOUNT_PROMPT'], buttons=menus.yesno(f"add_another_account_{account_id}"), parse_mode='html')
-            except SessionPasswordNeededError:
-                db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}", "user_accounts.$.temp_login_data.need_pass": True}})
-                await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
-            except PhoneCodeInvalidError:
-                await e.respond(strings['code_invalid'], parse_mode='html')
-                numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-                await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
-            except Exception as ex:
-                LOGGER.error(f"Error during member account OTP submission: {ex}")
-                db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.logged_in": False, "user_accounts.$.is_active_for_adding": False, "user_accounts.$.temp_login_data": {}}})
-                db.update_user_data(uid, {"$unset": {"state": 1}})
-                await e.respond(strings['ACCOUNT_LOGIN_FAILED'].format(error_message=ex), buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
-            finally:
-                if client.is_connected() and not utils.get(account_info, 'logged_in'):
-                    await client.disconnect()
+            await _handle_member_account_login_step(e, uid, account_id, e.text)
         elif state and state.startswith("awaiting_member_account_password_"):
             account_id = int(state.split('_')[-1])
-            account_info_doc = db.users_db.find_one({"chat_id": uid, "user_accounts.account_id": account_id})
-            if not account_info_doc: return await e.respond("Invalid state for password. Please try adding account again.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
-            account_info = next((acc for acc in utils.get(account_info_doc, 'user_accounts', []) if utils.get(acc, 'account_id') == account_id), None)
-            if not account_info or not utils.get(account_info, 'temp_login_data'):
-                return await e.respond("Invalid state for password. Please try adding account again.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
-            
-            temp_login_data = utils.get(account_info, 'temp_login_data')
-            session_string_temp = utils.get(temp_login_data, 'sess')
-            password = e.text.strip()
-
-            client = TelegramClient(StringSession(session_string_temp), config.API_ID, config.API_HASH, **config.device_info)
-            try:
-                await client.connect()
-                await client.sign_in(password=password)
-
-                db.update_user_account_in_owner_doc(
-                    uid, account_id,
-                    {"$set": {
-                        "user_accounts.$.session_string": client.session.save(),
-                        "user_accounts.$.logged_in": True,
-                        "user_accounts.$.last_login_time": time.time(),
-                        "user_accounts.$.is_active_for_adding": True,
-                        "user_accounts.$.temp_login_data": {}
-                    }, "$unset": {"state": 1}}
-                )
-                members_adder.USER_CLIENTS[account_id] = client
-                await e.respond(strings['ADD_ANOTHER_ACCOUNT_PROMPT'], buttons=menus.yesno(f"add_another_account_{account_id}"), parse_mode='html')
-            except PasswordHashInvalidError:
-                await e.respond(strings['pass_invalid'], parse_mode='html')
-                await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
-            except Exception as ex:
-                LOGGER.error(f"Error during member account 2FA password submission: {ex}")
-                db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.logged_in": False, "user_accounts.$.is_active_for_adding": False, "user_accounts.$.temp_login_data": {}}})
-                db.update_user_data(uid, {"$unset": {"state": 1}})
-                await e.respond(strings['ACCOUNT_LOGIN_FAILED'].format(error_message=ex), buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
-            finally:
-                if client.is_connected() and not utils.get(account_info, 'logged_in'):
-                    await client.disconnect()
-
+            await _handle_member_account_login_step(e, uid, account_id, e.text)
         else:
             await e.respond("I'm a dedicated member adding bot! Please use the commands or buttons to interact with me. Use /help for more info.")
 
@@ -442,7 +404,7 @@ def register_all_handlers(bot_client_instance):
 
         if raw_data.startswith("yes_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
-            await handle_add_member_account_flow(e)
+            await handle_add_member_account_flow(e) # Re-initiate flow
             return await e.answer("Initiating another account addition...", alert=True)
         elif raw_data.startswith("no_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
