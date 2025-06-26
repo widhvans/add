@@ -14,16 +14,12 @@ def init_db():
     try:
         mongo_client = MongoClient(config.MONGODB_URL, server_api=ServerApi('1'))
 
-        # --- UNIQUE COLLECTION NAME FIX ---
         # Derive a unique database name based on the bot token for isolation
-        # Using a simple hash/identifier from the token to ensure uniqueness
-        unique_db_identifier = config.BOT_TOKEN.split(':')[0] # Use part of the bot token as an identifier
-        db_name = f"telegram_bot_db_{unique_db_identifier}"
+        unique_db_identifier = config.BOT_TOKEN.split(':')[0]
+        db_name = f"member_adding_bot_db_{unique_db_identifier}" # Changed for clarity and uniqueness
 
-        users_db = mongo_client[db_name].users
+        users_db = mongo_client[db_name].users # This collection stores all user/owner data
         bot_settings_db = mongo_client[db_name].bot_settings
-        # --- END UNIQUE COLLECTION NAME FIX ---
-
         mongo_client.admin.command('ping')
         LOGGER.info(f"Successfully connected to MongoDB. Using database: {db_name}")
     except Exception as e:
@@ -35,7 +31,6 @@ def close_db():
         mongo_client.close()
         LOGGER.info("MongoDB connection closed.")
 
-# Helper functions for common DB operations
 def get_user_data(user_id):
     return users_db.find_one({"chat_id": user_id})
 
