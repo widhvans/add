@@ -4,7 +4,6 @@ import asyncio
 import time
 import datetime
 import re
-import uuid # For generating unique IDs for new accounts
 
 from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
@@ -44,7 +43,8 @@ def set_bot_client_for_modules(client):
 # Helper function for "Add Account" menu option (for member adding accounts)
 async def handle_add_member_account_flow(e):
     uid = e.sender_id
-    # Clean up any pending login sessions for this user before starting a new one
+    
+    # CRITICAL FIX: Clean up any pending login sessions for this user before starting a new one
     if uid in ONGOING_LOGIN_CLIENTS:
         client_to_clean = ONGOING_LOGIN_CLIENTS.pop(uid)
         if client_to_clean.is_connected():
@@ -72,7 +72,8 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         return await e.respond("Your login session expired or was interrupted. Please restart the account addition process.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
 
 
-    account_info = db.find_user_account_in_owner_doc(uid, account_id) # Re-fetch account_info for latest state
+    account_info_doc = db.users_db.find_one({"chat_id": uid, "user_accounts.account_id": account_id})
+    account_info = next((acc for acc in utils.get(account_info_doc, 'user_accounts', []) if utils.get(acc, 'account_id') == account_id), None)
     
     if not account_info or not utils.get(account_info, 'temp_login_data'):
         LOGGER.warning(f"Account info or temp_login_data missing for account_id {account_id} for user {uid}. Resetting state.")
@@ -87,7 +88,7 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
     phone_number = utils.get(temp_login_data, 'ph')
     phone_code_hash = utils.get(temp_login_data, 'phash')
     
-    processing_msg = await e.respond("Please wait... Processing your login.", parse_mode='html')
+    processing_msg = await e.respond("Please wait... Validating your input.", parse_mode='html') # Added "Please wait..." for validation
     await asyncio.sleep(0.5)
 
     try:
@@ -116,7 +117,6 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
                 "last_login_time": time.time(),
                 "is_active_for_adding": True,
                 "temp_login_data": {}, # Clear temp data
-                # No need to explicitly remove 'temp_login_data' from the DB, just set to empty dict
             }
         )
         db.update_user_data(uid, {"$unset": {"state": 1}}) # Clear owner's state
@@ -133,7 +133,7 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         LOGGER.info(f"2FA required for account {account_id}.")
         await processing_msg.delete()
         db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}"}})
-        db.update_user_account_in_owner_doc(uid, account_id, {"need_pass": True}) # Set need_pass for the account
+        db.update_user_account_in_owner_doc(uid, account_id, {"temp_login_data.need_pass": True}) # Update need_pass flag for the account
         await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
     except (PhoneCodeInvalidError, PasswordHashInvalidError) as ex:
         LOGGER.warning(f"Login failed for account {account_id} with invalid credentials: {ex}")
@@ -142,7 +142,7 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         # Specific error messages for invalid code/password
         if isinstance(ex, PhoneCodeInvalidError):
             await e.respond(strings['code_invalid'], parse_mode='html')
-            await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False) # Ask directly again
+            await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False)
         else: # PasswordHashInvalidError
             await e.respond(strings['pass_invalid'], parse_mode='html')
             await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
@@ -190,7 +190,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
                 new_account_id = max(existing_account_ids) + 1
             account_id_for_db_update = new_account_id
 
-            # CRITICAL FIX: Push the account skeleton with temp_login_data to DB AFTER successful code_request
+            # CRITICAL FIX: ONLY PUSH THE ACCOUNT SKELETON WITH TEMP_LOGIN_DATA TO DB AFTER SUCCESSFUL CODE_REQUEST
             new_account_entry = {
                 "account_id": account_id_for_db_update,
                 "phone_number": phone_number,
@@ -212,12 +212,13 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
                     'need_pass': False
                 }
             }
-            db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}})
+            db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}}) # Add the new account entry to DB
 
         elif current_state.startswith("awaiting_member_account_relogin_phone_"): # Re-login flow
             # For re-login, we assume the account_id_for_db_update is valid
+            # Update temp_login_data for existing account
             db.update_user_account_in_owner_doc(uid, account_id_for_db_update,
-                { # Update specific fields within the account
+                {
                     "temp_login_data": {
                         'phash': code_request.phone_code_hash,
                         'sess': client.session.save(),
@@ -234,7 +235,6 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
         ONGOING_LOGIN_CLIENTS[uid] = client
         
         await processing_msg.delete() # Delete the "Processing..." message
-        # No numpad, direct request for OTP
         await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False)
 
     except Exception as ex:
@@ -734,7 +734,7 @@ def register_all_handlers(bot_client_instance):
             
             if state and (state.startswith("awaiting_member_account_code_") or state.startswith("awaiting_member_account_relogin_code_")):
                 account_id = int(state.split('_')[-1])
-                # Numpad logic removed, this path should not be taken for button presses for OTP
+                # Numpad logic removed, this branch is not taken for button presses
                 await e.answer("Please send the OTP directly as a message.")
             else:
                 await e.answer("Unknown input. Please use the menu buttons or commands.")
