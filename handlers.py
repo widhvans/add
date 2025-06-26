@@ -12,7 +12,7 @@ from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButton, KeyboardButto
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
-    UserNotParticipantError, MessageNotModifiedError, PeerFloodError
+    UserNotParticipantError, MessageNotModifiedError, PhoneCodeExpiredError # Import PhoneCodeExpiredError
 )
 
 from config import config
@@ -133,19 +133,29 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         LOGGER.info(f"2FA required for account {account_id}.")
         await processing_msg.delete()
         db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}"}})
-        db.update_user_account_in_owner_doc(uid, account_id, {"temp_login_data.need_pass": True}) # Update need_pass flag for the account
+        # No need to set need_pass in DB anymore as we transition state directly
         await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
-    except (PhoneCodeInvalidError, PasswordHashInvalidError) as ex:
+    except (PhoneCodeInvalidError, PasswordHashInvalidError, PhoneCodeExpiredError) as ex: # CRITICAL FIX: Catch PhoneCodeExpiredError
         LOGGER.warning(f"Login failed for account {account_id} with invalid credentials: {ex}")
         await processing_msg.delete()
         
-        # Specific error messages for invalid code/password
-        if isinstance(ex, PhoneCodeInvalidError):
-            await e.respond(strings['code_invalid'], parse_mode='html')
-            await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False)
+        # Specific error messages for invalid code/password/expired code
+        if isinstance(ex, PhoneCodeExpiredError):
+            error_message = f"{strings['code_invalid']} ({ex})" # Indicate expired code
+        elif isinstance(ex, PhoneCodeInvalidError):
+            error_message = strings['code_invalid']
         else: # PasswordHashInvalidError
-            await e.respond(strings['pass_invalid'], parse_mode='html')
-            await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
+            error_message = strings['pass_invalid']
+
+        db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}}) # Remove incomplete account
+        db.update_user_data(uid, {"$unset": {"state": 1}}) # Clear owner's state
+
+        if uid in ONGOING_LOGIN_CLIENTS: # Clean up client from temporary storage
+            if client.is_connected():
+                await client.disconnect()
+            del ONGOING_LOGIN_CLIENTS[uid]
+
+        await e.respond(f"{error_message}\n\nPlease restart the account login process from the /settings menu.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
     except Exception as ex:
         LOGGER.error(f"Critical error during member account login for {account_id}: {ex}", exc_info=True)
         await processing_msg.delete()
@@ -175,6 +185,13 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
     # Hide the keyboard (if any) and send a processing message
     processing_msg = await e.respond(f"Attempting to log in account: **`{phone_number}`**\n\nPlease wait...", buttons=ReplyKeyboardHide(), parse_mode='Markdown')
     
+    # CRITICAL FIX: Ensure the client is new and not reused from a previous failed attempt without cleanup
+    if uid in ONGOING_LOGIN_CLIENTS:
+        client_to_clean = ONGOING_LOGIN_CLIENTS.pop(uid)
+        if client_to_clean.is_connected():
+            await client_to_clean.disconnect()
+            LOGGER.info(f"Cleaned up stale client before new code request for user {uid}")
+
     client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
     try:
         await client.connect()
@@ -212,13 +229,12 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
                     'need_pass': False
                 }
             }
-            db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}}) # Add the new account entry to DB
+            db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}})
 
         elif current_state.startswith("awaiting_member_account_relogin_phone_"): # Re-login flow
             # For re-login, we assume the account_id_for_db_update is valid
-            # Update temp_login_data for existing account
             db.update_user_account_in_owner_doc(uid, account_id_for_db_update,
-                {
+                { # Update specific fields within the account
                     "temp_login_data": {
                         'phash': code_request.phone_code_hash,
                         'sess': client.session.save(),
@@ -378,8 +394,7 @@ def register_all_handlers(bot_client_instance):
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
-            # CRITICAL FIX: Hide the reply keyboard using ReplyKeyboardHide directly.
-            # This is correct. The previous error was due to 'reply_markup' vs 'buttons' keyword.
+            # Hide the reply keyboard using ReplyKeyboardHide directly.
             await e.respond("Processing your request...", buttons=ReplyKeyboardHide(), parse_mode='html')
 
             # Handle existing number (for new add flow only)
@@ -531,7 +546,9 @@ def register_all_handlers(bot_client_instance):
                     
                     db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.target_chat_ids": target_chats}})
                     await e.answer(utils.strip_html(popup_text), alert=True)
-                    await menus.send_chat_selection_menu(e, uid, 'to', task_id, page)
+                    # We are using direct ID input now, not interactive chat selection menu
+                    # So, no need to call menus.send_chat_selection_menu
+                    await menus.send_adding_task_details_menu(e, uid, task_id) # Redirect to task details
             except Exception as ex:
                 LOGGER.error(f"Error processing compact callback 'm_add_sc': {ex}")
                 await e.answer("An error occurred during chat selection.", alert=True)
@@ -539,10 +556,21 @@ def register_all_handlers(bot_client_instance):
 
         elif raw_data.startswith("m_add_set|"):
             try:
-                _, selection_type, task_id, page = raw_data.split("|")
+                # This callback is for setting source/target via direct ID input.
+                # It does not navigate to an interactive chat selection menu anymore.
+                # Instead, it sets the state to await text input.
+                _, selection_type, task_id, page = raw_data.split("|") # page is now irrelevant
                 task_id = int(task_id)
-                page = int(page)
-                await menus.send_chat_selection_menu(e, uid, selection_type, task_id, page)
+                
+                prompt_key = ""
+                if selection_type == 'from':
+                    prompt_key = 'ASK_SOURCE_CHAT_ID'
+                    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_source_{task_id}"}})
+                elif selection_type == 'to':
+                    prompt_key = 'ASK_TARGET_CHAT_ID'
+                    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_target_{task_id}"}})
+                
+                await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
             except Exception as ex:
                 LOGGER.error(f"Error processing compact callback 'm_add_set': {ex}")
                 await e.answer("An error occurred.", alert=True)
@@ -732,12 +760,10 @@ def register_all_handlers(bot_client_instance):
             
             state = utils.get(owner_data, 'state')
             
-            if state and (state.startswith("awaiting_member_account_code_") or state.startswith("awaiting_member_account_relogin_code_")):
-                account_id = int(state.split('_')[-1])
-                # Numpad logic removed, this branch is not taken for button presses
-                await e.answer("Please send the OTP directly as a message.")
-            else:
-                await e.answer("Unknown input. Please use the menu buttons or commands.")
+            # CRITICAL FIX: Removed numpad logic as it's no longer used.
+            # This 'if state and (state.startswith("awaiting_member_account_code_") ...' was only for numpad clicks.
+            # The direct text input is handled in private_message_handler.
+            await e.answer("Unknown input. Please use the menu buttons or commands.")
 
         except (json.JSONDecodeError, KeyError):
             await e.answer("An unknown error occurred.")
