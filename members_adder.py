@@ -16,23 +16,32 @@ from telethon.errors import (
 from telethon.tl.types import ChannelParticipantsRecent
 from telethon.tl.functions.channels import GetParticipantsRequest
 
-import config # Make sure this line is exactly "import config"
+# REMOVED: import config  <-- This line is GONE
 import db
 import utils
 from strings import strings
 
 LOGGER = logging.getLogger(__name__)
+
+# GLOBAL VARIABLES TO BE SET EXTERNALLY
 bot_client = None
+current_config_instance = None # NEW: This will hold the config instance
 
 def set_bot_client(client):
     global bot_client
     bot_client = client
+
+# NEW FUNCTION: To set the config instance
+def set_config_instance(cfg):
+    global current_config_instance
+    current_config_instance = cfg
 
 # Global dictionaries for managing active adding tasks and user clients
 ACTIVE_ADDING_TASKS = {}
 USER_CLIENTS = {}
 
 async def run_user_broadcast(uid, message_to_send):
+    # Use current_config_instance instead of config
     status_msg = await bot_client.send_message(uid, strings['BROADCAST_STARTED'], parse_mode='html')
     owner_data = db.get_user_data(uid)
     
@@ -40,7 +49,7 @@ async def run_user_broadcast(uid, message_to_send):
     if not session_string:
         return await status_msg.edit(strings['session_invalid'], parse_mode='html')
 
-    u_client = TelegramClient(StringSession(session_string), config.API_ID, config.API_HASH, **config.device_info)
+    u_client = TelegramClient(StringSession(session_string), current_config_instance.API_ID, current_config_instance.API_HASH, **current_config_instance.device_info)
     sent_count, failed_count, total_count = 0, 0, 0
     last_update_time = time.time()
 
@@ -86,6 +95,7 @@ async def run_user_broadcast(uid, message_to_send):
         ), parse_mode='html')
 
 async def get_user_client(user_account_id):
+    # Use current_config_instance instead of config
     if user_account_id in USER_CLIENTS and USER_CLIENTS[user_account_id].is_connected():
         return USER_CLIENTS[user_account_id]
 
@@ -102,7 +112,7 @@ async def get_user_client(user_account_id):
         )
         return None
 
-    client = TelegramClient(StringSession(account_info['session_string']), config.API_ID, config.API_HASH, **config.device_info)
+    client = TelegramClient(StringSession(account_info['session_string']), current_config_instance.API_ID, current_config_instance.API_HASH, **current_config_instance.device_info)
 
     try:
         if not client.is_connected():
@@ -126,7 +136,10 @@ async def get_user_client(user_account_id):
             await client.disconnect()
         return None
 
-async def scrape_members(client, source_chat_id, limit=config.MEMBER_SCRAPE_LIMIT):
+async def scrape_members(client, source_chat_id, limit=None): # REMOVED: limit=config.MEMBER_SCRAPE_LIMIT
+    # Use current_config_instance.MEMBER_SCRAPE_LIMIT if limit is not provided
+    actual_limit = limit if limit is not None else current_config_instance.MEMBER_SCRAPE_LIMIT
+
     members = []
     offset = 0
     while True:
@@ -145,11 +158,11 @@ async def scrape_members(client, source_chat_id, limit=config.MEMBER_SCRAPE_LIMI
                 if not user.bot and not user.is_self and user.status and \
                    not isinstance(user.status, (type(None), functions.contacts.Blocked, functions.contacts.BlockedWait)):
                     members.append(user)
-                    if len(members) >= limit:
+                    if len(members) >= actual_limit: # Use actual_limit here
                         break
             
             offset += len(participants.users)
-            if len(members) >= limit or not participants.users:
+            if len(members) >= actual_limit or not participants.users: # Use actual_limit here
                 break
             await asyncio.sleep(random.uniform(1, 3))
 
@@ -164,6 +177,7 @@ async def scrape_members(client, source_chat_id, limit=config.MEMBER_SCRAPE_LIMI
     return members
 
 async def add_member_to_group(user_client, target_chat_id, member_user, task_id, account_id, owner_id):
+    # Use current_config_instance for limits
     try:
         await user_client(functions.channels.InviteToChannelRequest(
             channel=target_chat_id,
@@ -204,6 +218,7 @@ async def add_member_to_group(user_client, target_chat_id, member_user, task_id,
     return False
 
 async def manage_adding_task(owner_id, task_id):
+    # Use current_config_instance for limits and delays
     LOGGER.info(f"Starting to manage adding task {task_id} for owner {owner_id}")
     
     owner_doc = db.get_user_data(owner_id)
@@ -245,7 +260,8 @@ async def manage_adding_task(owner_id, task_id):
 
     try:
         await bot_client.send_message(owner_id, strings['SCRAPING_MEMBERS'])
-        members_to_add = await scrape_members(scrape_client_info[1], source_chat_id)
+        # Pass the limit to scrape_members
+        members_to_add = await scrape_members(scrape_client_info[1], source_chat_id, limit=current_config_instance.MEMBER_SCRAPE_LIMIT)
         if not members_to_add:
             await bot_client.send_message(owner_id, "No members found to scrape or an error occurred during scraping. Pausing task.")
             db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
@@ -253,7 +269,7 @@ async def manage_adding_task(owner_id, task_id):
         await bot_client.send_message(owner_id, strings['SCRAPING_COMPLETE'].format(count=len(members_to_add)))
     except Exception as e:
         LOGGER.error(f"Failed to scrape members for task {task_id}: {e}")
-        await bot_client.send_message(owner_id, f"Error scraping members for task {task_id}: {e}. Pausing task.")
+        await bot_client.send_message(owner_id, f"Error scraping members for task {task_id}: {e}. Pausing task.", parse_mode='html')
         db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
         return
 
@@ -291,8 +307,8 @@ async def manage_adding_task(owner_id, task_id):
                             acc_info['daily_adds_count'] = 0
                             acc_info['soft_error_count'] = 0
 
-                    if utils.get(acc_info, 'daily_adds_count', 0) < config.MAX_DAILY_ADDS_PER_ACCOUNT and \
-                       utils.get(acc_info, 'soft_error_count', 0) < config.SOFT_ADD_LIMIT_ERRORS:
+                    if utils.get(acc_info, 'daily_adds_count', 0) < current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT and \
+                       utils.get(acc_info, 'soft_error_count', 0) < current_config_instance.SOFT_ADD_LIMIT_ERRORS:
                         client = await get_user_client(acc_id)
                         if client:
                             available_accounts.append((acc_id, client, acc_info))
@@ -314,9 +330,9 @@ async def manage_adding_task(owner_id, task_id):
                     added_count_for_task += 1
                     break
 
-            if utils.get(account_data, 'daily_adds_count', 0) >= config.MAX_DAILY_ADDS_PER_ACCOUNT or \
-               utils.get(account_data, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS:
-                await bot_client.send_message(owner_id, strings['ADDING_LIMIT_REACHED'].format(account_id=account_id, limit=config.MAX_DAILY_ADDS_PER_ACCOUNT), parse_mode='html')
+            if utils.get(account_data, 'daily_adds_count', 0) >= current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT or \
+               utils.get(account_data, 'soft_error_count', 0) >= current_config_instance.SOFT_ADD_LIMIT_ERRORS:
+                await bot_client.send_message(owner_id, strings['ADDING_LIMIT_REACHED'].format(account_id=account_id, limit=current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT), parse_mode='html')
 
             if added_to_any_target:
                 current_member_index += 1
@@ -341,7 +357,7 @@ async def manage_adding_task(owner_id, task_id):
                     msg = await bot_client.send_message(owner_id, progress_msg_text, parse_mode='html')
                     db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.last_progress_message_id": msg.id}})
 
-            await asyncio.sleep(random.uniform(config.MIN_ADD_DELAY, config.MAX_ADD_DELAY))
+            await asyncio.sleep(random.uniform(current_config_instance.MIN_ADD_DELAY, current_config_instance.MAX_ADD_DELAY))
 
         except asyncio.CancelledError:
             LOGGER.info(f"Adding task {task_id} cancelled by owner.")
