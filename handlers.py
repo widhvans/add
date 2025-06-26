@@ -140,7 +140,8 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
     # This function is responsible for sending the code request and setting up temp_login_data
     
     # Hide the keyboard (if any) and send a processing message
-    processing_msg = await e.respond("Initiating login process for account...", reply_markup=ReplyKeyboardHide(), parse_mode='html')
+    # CRITICAL FIX: Use 'buttons' parameter for ReplyKeyboardHide
+    processing_msg = await e.respond("Initiating login process for account...", buttons=ReplyKeyboardHide(), parse_mode='html')
     
     client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
     try:
@@ -328,12 +329,12 @@ def register_all_handlers(bot_client_instance):
 
         if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_number")):
             account_id_match = re.search(r'_(\d+)$', state)
-            account_id = int(account_id_match.group(1)) if account_id_match else None # account_id can be None for initial number input
+            account_id = int(account_id_match.group(1)) if account_id_match else None
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
-            # CRITICAL FIX: Hide the reply keyboard using ReplyKeyboardHide.
-            await e.respond("Processing your request...", reply_markup=ReplyKeyboardHide(), parse_mode='html')
+            # CRITICAL FIX: Hide the reply keyboard using ReplyKeyboardHide directly in 'buttons'
+            await e.respond("Processing your request...", buttons=ReplyKeyboardHide(), parse_mode='html')
 
             # Handle existing number (for new add flow only)
             if state == "awaiting_member_account_number" and any(acc.get('phone_number') == phone_number for acc in utils.get(owner_data, 'user_accounts', [])):
@@ -443,7 +444,7 @@ def register_all_handlers(bot_client_instance):
         if raw_data.startswith("yes_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
             await e.answer("Initiating another account addition...", alert=True) 
-            await handle_add_member_account_flow(e) # Start the flow. It will respond with a new message.
+            await handle_add_member_account_flow(e)
             return 
 
         elif raw_data.startswith("no_add_another_account_"):
@@ -625,7 +626,6 @@ def register_all_handlers(bot_client_instance):
             elif action == "relogin_member_account":
                 account_id = utils.get(j, 'account_id')
                 db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_relogin_phone_{account_id}"}})
-                # Re-login flow directly asks for number, no button
                 await e.edit(strings['ADD_ACCOUNT_NUMBER_PROMPT'], parse_mode='Markdown')
             elif action == "toggle_member_account_ban":
                 account_id = utils.get(j, 'account_id')
