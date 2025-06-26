@@ -51,6 +51,8 @@ strings = {
     'ACCOUNT_STATUS_INVALID': "❌ **Invalid Session**",
     'ACCOUNT_STATUS_INACTIVE': "⏸️ Inactive",
     'NUMPAD_CONFIRM_BUTTON': "Confirm ✅", # Not used with direct input now
+    'BUTTON_ADD_ACCOUNT': "➕ Add Account", # CRITICAL FIX: Added missing string
+    'BUTTON_ADD_MORE_ACCOUNT': "➕ Add More Account", # CRITICAL FIX: Added missing string
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
     'CREATE_TASK_PROMPT': "To create a new adding task, please select a **source chat** by its ID or username.",
