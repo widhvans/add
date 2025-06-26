@@ -77,10 +77,8 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         # Check if awaiting OTP or password
         if utils.get(owner_data, 'state').startswith("awaiting_member_account_code_"):
             otp_code = input_text.strip()
-            # Ensure OTP length matches expected length if available (clen can be 0 or 5 in Telethon for different OTP types)
             # If clen is not 0, validate length
             if utils.get(temp_login_data, 'clen') and utils.get(temp_login_data, 'clen') != 0 and len(otp_code) != utils.get(temp_login_data, 'clen'):
-                # Numpad is removed, so direct input means user sends the full code
                 await processing_msg.delete()
                 return await e.respond(strings['code_invalid'] + "\n" + strings['ASK_OTP_PROMPT'], parse_mode='html')
 
@@ -115,8 +113,7 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
     except PhoneCodeInvalidError:
         await processing_msg.delete()
         await e.respond(strings['code_invalid'], parse_mode='html')
-        # Numpad is removed, ask directly again
-        await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html')
+        await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html') # Ask directly again
     except PasswordHashInvalidError:
         await processing_msg.delete()
         await e.respond(strings['pass_invalid'], parse_mode='html')
@@ -187,7 +184,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
                 {"$set": {"user_accounts.$.temp_login_data": {
                     'phash': code_request.phone_code_hash,
                     'sess': client.session.save(),
-                    'clen': code_request.type.length, # Store expected OTP length
+                    'clen': code_request.type.length,
                     'code_ok': False,
                     'need_pass': False
                 }}}
@@ -195,7 +192,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
         
         db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_code_{account_id_for_db_update}"}})
         
-        # No numpad
+        # Numpad is removed, no buttons here.
         await processing_msg.delete() # Delete the "Processing..." message
         await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False)
 
