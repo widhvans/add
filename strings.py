@@ -31,7 +31,7 @@ strings = {
     # New strings for member adding accounts
     'ADD_ACCOUNT_NUMBER_PROMPT': "Please send the **phone number(s)** (with country code, e.g., `+919876543210`) of the account(s) you want to add for member management.\n\n"
                                  "You can send **multiple numbers, one per line**, to add accounts in bulk.",
-    'share_phone_number_button': "Share Phone Number",
+    'share_phone_number_button': "Share Phone Number", # Still kept for consistency, but not used in this flow
     'ADD_ANOTHER_ACCOUNT_PROMPT': "✅ Account login successful! Would you like to add another account for member management?",
     'ASK_OTP_PROMPT': "Please enter the **OTP** you received on that Telegram account.",
     'ASK_PASSWORD_PROMPT': "Please enter the **2FA password** for that Telegram account.",
@@ -46,9 +46,9 @@ strings = {
                             "  Daily Adds: {daily_adds}/{limit}\n"
                             "  Soft Errors: {soft_errors}/{soft_limit}\n",
     'ACCOUNT_STATUS_HEALTHY': "✅ Healthy",
-    'ACCOUNT_STATUS_SUSPENDED': "⛔ **Suspended** (Reason: {reason})",
-    'ACCOUNT_STATUS_FLOODED': "⏳ **Flood Wait** (Until: {until_time})",
-    'ACCOUNT_STATUS_INVALID': "❌ **Invalid Session**",
+    'ACCOUNT_STATUS_SUSPENDED': "⛔ **Suspended** (Reason: {reason})", # Added bolding
+    'ACCOUNT_STATUS_FLOODED': "⏳ **Flood Wait** (Until: {until_time})", # Added bolding
+    'ACCOUNT_STATUS_INVALID': "❌ **Invalid Session**", # Added bolding
     'ACCOUNT_STATUS_INACTIVE': "⏸️ Inactive",
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
