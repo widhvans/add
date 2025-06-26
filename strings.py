@@ -3,54 +3,46 @@
 strings = {
     'START_TEXT': "Hello {user_firstname}! I am your **Dedicated Members Adding Bot**.\n\n"
                   "I can help you add members to your Telegram groups safely and efficiently. "
-                  "My main focus is to protect your accounts from bans while getting the job done.",
+                  "My main focus is to protect your accounts from bans while getting the job done.\n\n"
+                  "Use the menu below to get started!",
     'HELP_TEXT_FEATURES': "I am a **dedicated Members Adding Bot**. Here's what I can do:\n\n"
                           "1.  **Multiple Account Login:** Add several Telegram accounts to share the member adding load.\n"
                           "2.  **Smart Member Adding:** I add members with intelligent delays and ban prevention mechanisms to keep your accounts safe.\n"
                           "3.  **Task Management:** Create, start, pause, and monitor multiple adding tasks.\n\n"
-                          "Use /login to get started!",
+                          "There is no need to login your own Telegram account. Use `/addaccount` to start adding accounts for member management.",
     'COMMANDS_TEXT': "Here are the commands you can use:\n\n"
                      "/start - Start the bot and see the welcome message.\n"
                      "/help - Get information about my features.\n"
                      "/commands - See a list of available commands.\n"
-                     "/login - Log in your **main** Telegram account to use my features.\n"
-                     "/logout - Log out from your **main** Telegram account.\n"
                      "/settings - Access all member adding settings.\n"
-                     "/addaccount - Add another Telegram account specifically for adding members.\n"
+                     "/addaccount - Add a new Telegram account specifically for adding members.\n"
                      "/myaccounts - View your logged-in member adding accounts and their status.\n"
                      "/createtask - Create a new member adding task.\n"
                      "/managetasks - Manage your existing member adding tasks.\n"
-                     "/stats - Get bot usage statistics.\n"
-                     "/broadcast - Send a broadcast message (Owner only).\n",
+                     "/stats - Get bot usage statistics (Owner only).\n"
+                     "/broadcast - Send a broadcast message to your main account's contacts (Owner only).\n", # Clarified
     'FSUB_MESSAGE': "You must join our updates channel to use this bot.",
-    'need_login': "Please login your **main** Telegram account using /login to access this feature.",
-    'session_invalid': "Your session is invalid. Please login again using /login.",
-    'already_logged_in': "You are already logged in with your main account. Use /logout to log out if needed.",
-    'ask_phone': "Please click the button below to share your phone number for login.",
-    'ask_code': "Please enter the OTP you received on your Telegram account.",
-    'ask_pass': "Please enter your 2FA password.",
+
+    # Removed 'need_login', 'session_invalid', 'already_logged_in', 'ask_phone', 'ask_code', 'ask_pass', etc.
+    # The bot owner does NOT login their own account anymore.
+
     'code_invalid': "Invalid OTP. Please try again.",
     'pass_invalid': "Invalid password. Please try again.",
-    'LOGIN_SUCCESS_TEXT': "Login successful for your main account! You can now use the bot's features.",
-    'logout_sure': "Are you sure you want to log out from your main session?",
-    'logged_out': "You have been successfully logged out from your main account.",
-    'not_logged_out': "Logout cancelled.",
-    'wrong_phone': "The phone number you sent is not associated with your Telegram account or the current login process. Please try again with the correct phone number.",
+    
+    'wrong_phone': "The phone number you sent is not associated with the current login process. Please try again.",
     'msg_404': "Message not found or inaccessible.",
-    'user_cooldown': "Please wait {seconds} seconds before trying again.",
+    'user_cooldown': "Please wait {seconds} seconds before trying again.", # Still relevant for future general cooldowns
 
-    # New strings for phone number request specifically for ReplyKeyboardMarkup
-    'ask_phone_button': "✅ Share Phone Number ✅", # Button text for main login and add account flow
-    'ask_phone_prompt': "Please click the button below to share your phone number to log in.", # Prompt for main login
-
-    # Member Adding Specific Strings
-    'SETTINGS_MENU_TEXT': "Choose a setting to configure for member adding:",
-    'ADD_ACCOUNT_PROMPT': "Please click the button below to share your phone number to login to the **member adding account**.",
-    'share_phone_number_button': "Share Phone Number", # Used in handler for member adding flow phone button
+    # New strings for phone number request specifically for ReplyKeyboardMarkup for *member adding accounts*
+    'ADD_ACCOUNT_PROMPT': "To add a member-managing account, please click the button below to share its phone number. This will initiate the login process.",
+    'share_phone_number_button': "Share Phone Number", # Button text for member adding login phone share
+    'ADD_ANOTHER_ACCOUNT_PROMPT': "Account login successful! Would you like to add another account for member management?",
+    'ASK_OTP_PROMPT': "Please enter the OTP you received on that Telegram account.",
+    'ASK_PASSWORD_PROMPT': "Please enter the 2FA password for that Telegram account.",
 
     'ACCOUNT_ADDED_SUCCESS': "✅ Account {phone_number} added successfully! Account ID: <code>{account_id}</code>",
     'ACCOUNT_LOGIN_FAILED': "Login failed for this account. Reason: {error_message}. Please try again or check your credentials.",
-    'NO_ACCOUNTS_FOR_ADDING': "You have no member adding accounts logged in yet. Please use '➕ Add Account' first.",
+    'NO_ACCOUNTS_FOR_ADDING': "You have no member adding accounts logged in yet. Use '➕ Add Account' first.",
     'MY_ACCOUNTS_HEADER': "📊 **Your Member Adding Accounts**\n\n",
     'ACCOUNT_STATUS_ENTRY': "• Account: <code>{phone_number}</code> | ID: <code>{account_id}</code>\n"
                             "  Status: {status}\n"
@@ -99,7 +91,7 @@ strings = {
     'PEER_FLOOD_DETECTED': "⚠️ **Peer Flood Detected!** Account <code>{account_id}</code> has hit a Peer Flood error. Suspending this account for the day to prevent a ban. Please check account activities.",
     'FLOOD_WAIT_DETECTED': "⏳ Account <code>{account_id}</code> is in flood wait for {seconds} seconds. Waiting...",
     'USER_ACCOUNT_DISCONNECTED': "❌ User account <code>{account_id}</code> disconnected or session invalid. Please re-login.",
-    'OWNER_ACCOUNT_LOGIN_REQUIRED': "Please login your main account first to access this feature.",
+    'OWNER_ACCOUNT_LOGIN_REQUIRED': "You do not need to login your main account. Please use /addaccount to manage other accounts.", # Clarified
     'CHOOSE_ACCOUNTS_FOR_TASK': "Select accounts to assign to Task {task_id}. Selected accounts will participate in adding members for this task.",
     'ACCOUNT_ASSIGNED_TO_TASK': "✅ Account <code>{account_id}</code> assigned to Task {task_id}.",
     'ACCOUNT_UNASSIGNED_FROM_TASK': "☑️ Account <code>{account_id}</code> unassigned from Task {task_id}.",
