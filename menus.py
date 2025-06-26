@@ -105,8 +105,7 @@ async def display_member_accounts(e, uid):
     # CRITICAL FIX: Auto-remove invalid/unsuccessful accounts from the DB
     accounts_to_remove_ids = []
     for account in accounts:
-        # An account is invalid if it's not logged in AND doesn't have a session string
-        # temp_login_data is a temporary state, not a persistent session.
+        # An account is invalid if it's not logged in AND doesn't have a session string (meaning login failed and cleanup wasn't perfect)
         if not utils.get(account, 'logged_in') and not utils.get(account, 'session_string'):
             accounts_to_remove_ids.append(utils.get(account, 'account_id'))
     
@@ -420,7 +419,7 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
             nav_row.append(Button.inline("◀️ Prev", prev_callback))
         
         if total_pages > 0:
-            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop')) # FIX: Corrected missing quote
+            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop'))
 
         if page < total_pages:
             next_callback = f'm_add_set|{selection_type}|{task_id}|{page+1}'
