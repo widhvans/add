@@ -33,8 +33,7 @@ strings = {
                                  "You can send **multiple numbers, one per line**, to add accounts in bulk.",
     'share_phone_number_button': "Share Phone Number", # Not used anymore
     'ADD_ANOTHER_ACCOUNT_PROMPT': "✅ Account login successful! Would you like to add another account for member management?",
-    'ASK_OTP_PROMPT': "Please enter the **OTP** (e.g., `123 45`) you received on that Telegram account.\n\n"
-                      "If the code has expired or you didn't receive it, you need to restart the account login process from the /settings menu.", # Updated OTP instruction
+    'ASK_OTP_PROMPT': "Please enter the **OTP** (e.g., `123 45`) you received on that Telegram account. *The bot will automatically remove any spaces.*", # Updated OTP instruction
     'ASK_PASSWORD_PROMPT': "Please enter the **2FA password** for that Telegram account.",
     'ACCOUNT_ALREADY_ADDED': "Account with phone number `{phone_number}` is already added.",
 
@@ -52,6 +51,8 @@ strings = {
     'ACCOUNT_STATUS_INVALID': "❌ **Invalid Session**",
     'ACCOUNT_STATUS_INACTIVE': "⏸️ Inactive",
     'NUMPAD_CONFIRM_BUTTON': "Confirm ✅", # Not used with direct input now
+    'BUTTON_ADD_ACCOUNT': "➕ Add Account", # Used in menus.py
+    'BUTTON_ADD_MORE_ACCOUNT': "➕ Add More Account", # Used in menus.py
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
     'CREATE_TASK_PROMPT': "To create a new adding task, please select a **source chat** by its ID or username.",
