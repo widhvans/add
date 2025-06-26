@@ -7,9 +7,8 @@ import re
 
 from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
-from telethon.tl.custom.button import Button # Keep Button for both inline and request_phone
-# REMOVED: from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestPhone
-# Rely on telethon.tl.custom.button.Button to handle the underlying TL types for ReplyKeyboardMarkup.
+from telethon.tl.custom.button import Button
+# Removed: ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestPhone imports as they are not used in new flow
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
@@ -40,14 +39,10 @@ def set_bot_client_for_modules(client):
 # Helper for "Add Account" menu option (for member adding accounts)
 async def handle_add_member_account_flow(e):
     uid = e.sender_id
-    db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_phone"}})
+    db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_number"}}) # New state
     
-    # CRITICAL FIX: Use Button.request_phone directly in the list for buttons.
-    # Telethon's respond/send_message method will correctly convert this to ReplyKeyboardMarkup
-    # No need to explicitly create ReplyKeyboardMarkup TLObject here.
-    buttons_for_phone_request = [[Button.request_phone(strings['share_phone_number_button'])]]
-    
-    await e.respond(strings['ADD_ACCOUNT_PROMPT'], buttons=buttons_for_phone_request, parse_mode='html')
+    # Directly ask for numbers, no reply keyboard
+    await e.respond(strings['ADD_ACCOUNT_NUMBER_PROMPT'], parse_mode='html')
 
 
 # Helper for deleting member account
@@ -95,7 +90,17 @@ def register_all_handlers(bot_client_instance):
             })
         await menus.send_main_menu(e) # Direct to main menu with "Lets Go" button
 
-    # Removed: /help, /commands, /settings, /login, /logout commands (as per user request)
+    @_bot_client_instance.on(events.NewMessage(pattern=r"/help", func=lambda e: e.is_private))
+    async def help_command_handler(e):
+        await menus.send_help_menu(e)
+
+    @_bot_client_instance.on(events.NewMessage(pattern=r"/commands", func=lambda e: e.is_private))
+    async def commands_command_handler(e):
+        await menus.send_commands_menu(e)
+
+    @_bot_client_instance.on(events.NewMessage(pattern=r"/settings", func=lambda e: e.is_private))
+    async def settings_command_handler(e):
+        await menus.send_settings_menu(e)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/addaccount", func=lambda e: e.is_private))
     async def add_member_account_command_handler(e):
@@ -146,34 +151,35 @@ def register_all_handlers(bot_client_instance):
             return
         await e.respond("This bot is dedicated to member adding. Please use the menu or commands like /addaccount to manage accounts.")
 
+    # Modified: Contact handler now directly processes numbers from text if in state
     @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and e.contact))
     async def contact_handler(e):
         uid = e.sender_id
         owner_data = db.get_user_data(uid)
         state = utils.get(owner_data, 'state')
 
-        if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_phone")):
-            account_id_match = re.search(r'_(\d+)$', state)
+        # This block now handles the shared contact for member-adding accounts
+        if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_number")): # Changed to awaiting_member_account_number
+            account_id_match = re.search(r'_(\d+)$', state) # This might not exist for new number
             account_id = int(account_id_match.group(1)) if account_id_match else None
             
-            phone_number = e.contact.phone_number
-            
-            # Hide the reply keyboard after receiving contact
-            # Send an empty ReplyKeyboardMarkup to hide the keyboard
-            # CRITICAL FIX: Use ReplyKeyboardMarkup directly for hiding, pass it as reply_markup
-            await e.respond("Processing your request...", reply_markup=ReplyKeyboardMarkup(rows=[], selective=True, resize_keyboard=True), parse_mode='html')
+            phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
-            if state == "awaiting_member_account_phone" and any(acc.get('phone_number') == phone_number for acc in utils.get(owner_data, 'user_accounts', [])):
+            # Hide the reply keyboard by sending an empty one
+            await e.respond("Processing account...", reply_markup=ReplyKeyboardMarkup(rows=[], selective=True, resize_keyboard=True), parse_mode='html')
+
+            # Handle existing number
+            if state == "awaiting_member_account_number" and any(acc.get('phone_number') == phone_number for acc in utils.get(owner_data, 'user_accounts', [])):
                 db.update_user_data(uid, {"$set": {"state": None}})
-                return await e.respond("This phone number is already added.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+                return await e.respond(strings['ACCOUNT_ALREADY_ADDED'].format(phone_number=phone_number), buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
 
             client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
             try:
                 await client.connect()
                 code_request = await client.send_code_request(phone_number)
                 
-                if state == "awaiting_member_account_phone":
-                    existing_account_ids = [acc.get('account_id') for acc in utils.get(owner_data, 'user_accounts', []) if utils.get(acc, 'account_id')]
+                if state == "awaiting_member_account_number": # New account flow
+                    existing_account_ids = [utils.get(acc, 'account_id') for acc in utils.get(owner_data, 'user_accounts', []) if utils.get(acc, 'account_id')]
                     new_account_id = 1
                     if existing_account_ids:
                         new_account_id = max(existing_account_ids) + 1
@@ -212,7 +218,7 @@ def register_all_handlers(bot_client_instance):
 
             except Exception as ex:
                 LOGGER.error(f"Error during member account phone submission: {ex}")
-                if state == "awaiting_member_account_phone" and account_id:
+                if state == "awaiting_member_account_number" and account_id:
                     db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
                 db.update_user_data(uid, {"$set": {"state": None}})
                 await e.respond(f"Failed to process account: {ex}", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
@@ -221,15 +227,85 @@ def register_all_handlers(bot_client_instance):
         else:
             await e.respond(strings['wrong_phone'], parse_mode='html')
 
-    @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and not e.text.startswith('/')))
-    async def private_message_handler(e):
+    @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and e.text and not e.text.startswith('/')))
+    async def private_message_handler(e): # Handles OTPs and Passwords, and direct phone number input
         uid = e.sender_id
         owner_data = db.get_user_data(uid)
         if not owner_data: return
         
         state = utils.get(owner_data, 'state')
 
-        if state == "awaiting_broadcast_message":
+        # Handle direct phone number input for adding new accounts
+        if state == "awaiting_member_account_number":
+            phone_numbers_raw = e.text.strip().split('\n')
+            
+            # Initiate login for each number, or handle bulk
+            for phone_number_raw in phone_numbers_raw:
+                phone_number = phone_number_raw.replace(" ", "") # Clean the phone number
+                if not phone_number.strip(): continue # Skip empty lines
+
+                # Check if this phone number is already added
+                if any(acc.get('phone_number') == phone_number for acc in utils.get(owner_data, 'user_accounts', [])):
+                    await e.respond(strings['ACCOUNT_ALREADY_ADDED'].format(phone_number=phone_number), parse_mode='html')
+                    continue # Skip to next number
+                
+                # Initiate login for this single number
+                account_id = None # Will be set after pushing new account
+                try:
+                    client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
+                    await client.connect()
+                    code_request = await client.send_code_request(phone_number)
+
+                    existing_account_ids = [utils.get(acc, 'account_id') for acc in utils.get(owner_data, 'user_accounts', []) if utils.get(acc, 'account_id')]
+                    new_account_id = 1
+                    if existing_account_ids:
+                        new_account_id = max(existing_account_ids) + 1
+                    account_id = new_account_id
+
+                    new_account_entry = {
+                        "account_id": account_id,
+                        "phone_number": phone_number,
+                        "session_string": client.session.save(),
+                        "logged_in": False,
+                        "last_login_time": None,
+                        "daily_adds_count": 0,
+                        "soft_error_count": 0,
+                        "last_add_date": None,
+                        "is_active_for_adding": False,
+                        "is_banned_for_adding": False,
+                        "flood_wait_until": 0,
+                        "error_type": None,
+                    }
+                    db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}})
+                    
+                    db.update_user_account_in_owner_doc(uid, account_id,
+                        {"$set": {"user_accounts.$.temp_login_data": {
+                            'phash': code_request.phone_code_hash,
+                            'sess': client.session.save(),
+                            'clen': code_request.type.length,
+                            'code_ok': False,
+                            'need_pass': False
+                        }}}
+                    )
+                    # Update owner's state to await OTP for *this specific account*
+                    db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_code_{account_id}"}})
+                    
+                    numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
+                    await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
+                    break # Break after initiating first login process, wait for OTP
+                except Exception as ex:
+                    LOGGER.error(f"Error during phone number input processing for {phone_number}: {ex}")
+                    if account_id: # If an incomplete entry was pushed
+                        db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
+                    await e.respond(f"Failed to process phone number {phone_number_raw}: {ex}", parse_mode='html')
+                    # Do NOT break here if it's bulk input, continue trying other numbers, unless it's a critical bot error.
+            
+            if not phone_numbers_raw: # If no valid numbers were found
+                 await e.respond("No valid phone numbers provided. Please send numbers in international format, one per line.", parse_mode='html')
+            
+            return # Exit handler after processing phone number input
+
+        elif state == "awaiting_broadcast_message":
             db.update_user_data(uid, {"$set": {"state": None}})
             asyncio.create_task(members_adder.run_user_broadcast(uid, e.message))
         elif state and state.startswith("awaiting_member_account_code_"):
