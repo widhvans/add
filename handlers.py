@@ -26,6 +26,10 @@ LOGGER = logging.getLogger(__name__)
 
 _bot_client_instance = None
 
+# CRITICAL FIX: Global dictionary to hold TelegramClient instances for ongoing login attempts
+# Key: owner_uid, Value: TelegramClient instance
+ONGOING_LOGIN_CLIENTS = {}
+
 def set_bot_client_for_modules(client):
     """Sets the bot_client instance for handlers and other modules that need it."""
     global _bot_client_instance
@@ -48,39 +52,47 @@ async def handle_add_member_account_flow(e):
 # Centralized helper for handling OTP/Password input and login attempt for member accounts
 async def _handle_member_account_login_step(e, uid, account_id, input_text):
     owner_data = db.get_user_data(uid)
-    account_info_doc = db.users_db.find_one({"chat_id": uid, "user_accounts.account_id": account_id})
     
-    if not account_info_doc:
-        LOGGER.warning(f"Attempted login step for non-existent account_id {account_id} for user {uid}. Resetting state.")
+    # CRITICAL FIX: Retrieve the *live* client instance
+    client = ONGOING_LOGIN_CLIENTS.get(uid)
+    if not client or not client.is_connected():
+        LOGGER.warning(f"No active client found for user {uid} during login step. Resetting state.")
         db.update_user_data(uid, {"$set": {"state": None}}) # Clear state
-        return await e.respond("An error occurred with your account session. Please try adding the account again from the main menu.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+        if account_id: # If there's an associated account, remove incomplete entry
+             db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
+        if uid in ONGOING_LOGIN_CLIENTS:
+            del ONGOING_LOGIN_CLIENTS[uid] # Clean up
+        return await e.respond("Your login session expired or was interrupted. Please restart the account addition process.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
 
+
+    account_info_doc = db.users_db.find_one({"chat_id": uid, "user_accounts.account_id": account_id})
     account_info = next((acc for acc in utils.get(account_info_doc, 'user_accounts', []) if utils.get(acc, 'account_id') == account_id), None)
+    
     if not account_info or not utils.get(account_info, 'temp_login_data'):
-        LOGGER.warning(f"Login data missing for account_id {account_id} for user {uid}. Resetting state.")
-        db.update_user_data(uid, {"$set": {"state": None}}) # Clear state
-        return await e.respond("Your login session expired or is invalid. Please restart the account addition process.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
+        LOGGER.warning(f"Account info or temp_login_data missing for account_id {account_id} for user {uid}. Resetting state.")
+        db.update_user_data(uid, {"$set": {"state": None}})
+        if uid in ONGOING_LOGIN_CLIENTS:
+            del ONGOING_LOGIN_CLIENTS[uid]
+        if client.is_connected(): await client.disconnect() # Disconnect the problematic client
+        if account_id: db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}}) # Remove any half-created account
+        return await e.respond("Your login data is invalid. Please restart account addition.", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
     
     temp_login_data = utils.get(account_info, 'temp_login_data')
     phone_number = utils.get(temp_login_data, 'ph')
     phone_code_hash = utils.get(temp_login_data, 'phash')
-    session_string_temp = utils.get(temp_login_data, 'sess')
     
-    client = TelegramClient(StringSession(session_string_temp), config.API_ID, config.API_HASH, **config.device_info)
-
     processing_msg = await e.respond("Please wait... Processing your login.", parse_mode='html')
     await asyncio.sleep(0.5)
 
     try:
-        await client.connect()
-        
         # Check if awaiting OTP or password
         if utils.get(owner_data, 'state').startswith("awaiting_member_account_code_"):
-            otp_code = input_text.strip()
-            # If clen is not 0, validate length
+            otp_code = input_text.strip().replace(" ", "") # CRITICAL FIX: Clean OTP input (remove spaces)
+            
+            # Validate OTP length if clen is specified and not zero
             if utils.get(temp_login_data, 'clen') and utils.get(temp_login_data, 'clen') != 0 and len(otp_code) != utils.get(temp_login_data, 'clen'):
                 await processing_msg.delete()
-                return await e.respond(strings['code_invalid'] + "\n" + strings['ASK_OTP_PROMPT'], parse_mode='html')
+                return await e.respond(strings['code_invalid'] + "\n" + strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False)
 
             await client.sign_in(phone=phone_number, code=otp_code, phone_code_hash=phone_code_hash)
             
@@ -88,51 +100,65 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
             password = input_text.strip()
             await client.sign_in(password=password)
 
-        # Login successful
+        # Login successful if no exception
         # CRITICAL FIX: Save permanent data ONLY NOW.
         db.update_user_account_in_owner_doc(
             uid, account_id,
             {"$set": {
-                "user_accounts.$.session_string": client.session.save(),
+                "user_accounts.$.session_string": client.session.save(), # Save the *final* session string
                 "user_accounts.$.logged_in": True,
                 "user_accounts.$.last_login_time": time.time(),
                 "user_accounts.$.is_active_for_adding": True,
                 "user_accounts.$.temp_login_data": {} # Clear temp data
             }, "$unset": {"state": 1}} # Clear owner's state
         )
-        members_adder.USER_CLIENTS[account_id] = client # Add to active clients
+        members_adder.USER_CLIENTS[account_id] = client # Add to active clients for member adding
+        if uid in ONGOING_LOGIN_CLIENTS:
+            del ONGOING_LOGIN_CLIENTS[uid] # Remove client from temporary storage once login is complete
 
         await processing_msg.delete()
         await e.respond(strings['ACCOUNT_ADDED_SUCCESS'].format(phone_number=phone_number, account_id=account_id), parse_mode='html')
         await e.respond(strings['ADD_ANOTHER_ACCOUNT_PROMPT'], buttons=menus.yesno(f"add_another_account_{account_id}"), parse_mode='html')
 
     except SessionPasswordNeededError:
+        LOGGER.info(f"2FA required for account {account_id}.")
         await processing_msg.delete()
         db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}", "user_accounts.$.temp_login_data.need_pass": True}})
         await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
-    except PhoneCodeInvalidError:
+    except (PhoneCodeInvalidError, PasswordHashInvalidError) as ex:
+        LOGGER.warning(f"Login failed for account {account_id} with invalid credentials: {ex}")
         await processing_msg.delete()
-        await e.respond(strings['code_invalid'], parse_mode='html')
-        await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html') # Ask directly again
-    except PasswordHashInvalidError:
-        await processing_msg.delete()
-        await e.respond(strings['pass_invalid'], parse_mode='html')
-        await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
+        
+        # Specific error messages for invalid code/password
+        if isinstance(ex, PhoneCodeInvalidError):
+            await e.respond(strings['code_invalid'], parse_mode='html')
+            await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False) # Ask directly again
+        else: # PasswordHashInvalidError
+            await e.respond(strings['pass_invalid'], parse_mode='html')
+            await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
     except Exception as ex:
-        LOGGER.error(f"Error during member account login: {ex}")
+        LOGGER.error(f"Critical error during member account login for {account_id}: {ex}", exc_info=True)
         await processing_msg.delete()
 
-        # CRITICAL FIX: If login fails, remove the incomplete account entry
+        # CRITICAL FIX: If login fails for ANY reason, remove the incomplete account entry
         db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
         db.update_user_data(uid, {"$unset": {"state": 1}}) # Clear owner's state
         
+        # Clean up the client from temporary storage on final failure
+        if uid in ONGOING_LOGIN_CLIENTS:
+            if client.is_connected():
+                await client.disconnect()
+            del ONGOING_LOGIN_CLIENTS[uid]
+        
         await e.respond(strings['ACCOUNT_LOGIN_FAILED'].format(error_message=ex), buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
     finally:
-        if client.is_connected() and not utils.get(account_info, 'logged_in'):
-            await client.disconnect()
+        # Do NOT disconnect client here if successful (it's now in members_adder.USER_CLIENTS)
+        # If it's a 2FA step, it also stays connected.
+        # Only disconnect if an unhandled exception occurred, and it wasn't already cleaned up.
+        pass
 
 
-# Helper for initial phone request or re-login phone request (now handles adding initial skeleton to DB)
+# Helper for initial phone request or re-login phone request
 async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone_number, current_state):
     # This function is responsible for sending the code request and setting up temp_login_data
     
@@ -171,7 +197,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
                 "error_type": None,
                 "temp_login_data": { # Populate temp_login_data here
                     'phash': code_request.phone_code_hash,
-                    'sess': client.session.save(), # Temporary session string
+                    'sess': client.session.save(), # Temporary session string for this client
                     'clen': code_request.type.length, # Store expected OTP length
                     'code_ok': False,
                     'need_pass': False
@@ -180,6 +206,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
             db.update_user_data(uid, {"$push": {"user_accounts": new_account_entry}}) # Add the new account entry to DB
 
         elif current_state.startswith("awaiting_member_account_relogin_phone_"): # Re-login flow
+            # For re-login, we assume the account_id_for_db_update is valid
             db.update_user_account_in_owner_doc(uid, account_id_for_db_update,
                 {"$set": {"user_accounts.$.temp_login_data": {
                     'phash': code_request.phone_code_hash,
@@ -192,12 +219,15 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
         
         db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_code_{account_id_for_db_update}"}})
         
-        # Numpad is removed, no buttons here.
+        # CRITICAL FIX: Store the live client instance for subsequent OTP/password steps
+        ONGOING_LOGIN_CLIENTS[uid] = client
+        
         await processing_msg.delete() # Delete the "Processing..." message
+        # No numpad, direct request for OTP
         await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False)
 
     except Exception as ex:
-        LOGGER.error(f"Error during phone number input processing: {ex}")
+        LOGGER.error(f"Error during phone number input processing (code request failed): {ex}", exc_info=True)
         await processing_msg.delete() # Delete the "Processing..." message
 
         # CRITICAL FIX: If code_request fails, remove the incomplete account entry for new adds
@@ -205,9 +235,17 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
             db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id_for_db_update}}})
         
         db.update_user_data(uid, {"$set": {"state": None}}) # Clear owner state
+        
+        # Clean up client from ONGOING_LOGIN_CLIENTS if it was added and error occurred
+        if uid in ONGOING_LOGIN_CLIENTS:
+            if client.is_connected():
+                await client.disconnect()
+            del ONGOING_LOGIN_CLIENTS[uid]
+        
         await e.respond(f"Failed to process account: {ex}", buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
     finally:
-        if client.is_connected(): await client.disconnect()
+        # Do NOT disconnect client here. It needs to stay connected in ONGOING_LOGIN_CLIENTS.
+        pass
 
 
 # Helper for deleting member account
@@ -253,7 +291,7 @@ def register_all_handlers(bot_client_instance):
                 "user_accounts": [],
                 "adding_tasks": []
             })
-        await menus.send_main_menu(e) # Direct to main menu with "Lets Go" button
+        await menus.send_main_menu(e)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/help", func=lambda e: e.is_private))
     async def help_command_handler(e):
