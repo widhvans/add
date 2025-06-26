@@ -41,7 +41,7 @@ async def handle_add_member_account_flow(e):
     uid = e.sender_id
     db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_number"}})
     
-    # CRITICAL FIX: No more "share phone number" button. Directly ask for numbers.
+    # No more "share phone number" button. Directly ask for numbers.
     await e.respond(strings['ADD_ACCOUNT_NUMBER_PROMPT'], parse_mode='Markdown')
 
 
@@ -77,8 +77,9 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         # Check if awaiting OTP or password
         if utils.get(owner_data, 'state').startswith("awaiting_member_account_code_"):
             otp_code = input_text.strip()
-            # Ensure OTP length matches expected length if available
-            if utils.get(temp_login_data, 'clen') and len(otp_code) != utils.get(temp_login_data, 'clen'):
+            # Ensure OTP length matches expected length if available (clen can be 0 or 5 in Telethon for different OTP types)
+            # If clen is not 0, validate length
+            if utils.get(temp_login_data, 'clen') and utils.get(temp_login_data, 'clen') != 0 and len(otp_code) != utils.get(temp_login_data, 'clen'):
                 numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
                 await processing_msg.delete()
                 return await e.respond(strings['code_invalid'] + "\n" + strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
@@ -327,11 +328,11 @@ def register_all_handlers(bot_client_instance):
 
         if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_number")):
             account_id_match = re.search(r'_(\d+)$', state)
-            account_id = int(account_id_match.group(1)) if account_id_match else None
+            account_id = int(account_id_match.group(1)) if account_id_match else None # account_id can be None for initial number input
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
-            # CRITICAL FIX: Hide the reply keyboard using ReplyKeyboardHide without extra parameters.
+            # CRITICAL FIX: Hide the reply keyboard using ReplyKeyboardHide.
             await e.respond("Processing your request...", reply_markup=ReplyKeyboardHide(), parse_mode='html')
 
             # Handle existing number (for new add flow only)
@@ -442,8 +443,8 @@ def register_all_handlers(bot_client_instance):
         if raw_data.startswith("yes_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
             await e.answer("Initiating another account addition...", alert=True) 
-            await handle_add_member_account_flow(e)
-            return
+            await handle_add_member_account_flow(e) # Start the flow. It will respond with a new message.
+            return 
 
         elif raw_data.startswith("no_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
@@ -454,6 +455,7 @@ def register_all_handlers(bot_client_instance):
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
 
+        # ... (rest of the main_callback_handler remains the same)
         if raw_data.startswith("m_add_sc|"):
             try:
                 parts = raw_data.split("|")
@@ -623,7 +625,8 @@ def register_all_handlers(bot_client_instance):
             elif action == "relogin_member_account":
                 account_id = utils.get(j, 'account_id')
                 db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_relogin_phone_{account_id}"}})
-                await e.edit(f"Please forward your phone number associated with account <code>{account_id}</code> to re-login.", buttons=[[Button.request_phone("Share Phone Number", resize=True, single_use=True)], [Button.inline("Cancel", f'{{"action":"member_account_details","account_id":{account_id}}}')]], parse_mode='html')
+                # Re-login flow directly asks for number, no button
+                await e.edit(strings['ADD_ACCOUNT_NUMBER_PROMPT'], parse_mode='Markdown')
             elif action == "toggle_member_account_ban":
                 account_id = utils.get(j, 'account_id')
                 account_info = db.find_user_account_in_owner_doc(uid, account_id)
