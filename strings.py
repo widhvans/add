@@ -51,8 +51,6 @@ strings = {
     'ACCOUNT_STATUS_INVALID': "❌ **Invalid Session**",
     'ACCOUNT_STATUS_INACTIVE': "⏸️ Inactive",
     'NUMPAD_CONFIRM_BUTTON': "Confirm ✅", # Not used with direct input now
-    'BUTTON_ADD_ACCOUNT': "➕ Add Account", # Used in menus.py
-    'BUTTON_ADD_MORE_ACCOUNT': "➕ Add More Account", # Used in menus.py
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
     'CREATE_TASK_PROMPT': "To create a new adding task, please select a **source chat** by its ID or username.",
