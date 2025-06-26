@@ -7,9 +7,11 @@ import re
 
 from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
+# CRITICAL FIX: Only import Button from telethon.tl.custom.button
 from telethon.tl.custom.button import Button
-# CRITICAL FIX: Ensure correct imports for TL types
-from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestPhone
+# REMOVED: from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestPhone
+from telethon.tl.types import ReplyKeyboardMarkup # ONLY ReplyKeyboardMarkup is needed from .types for now.
+# The custom Button.request_phone handles KeyboardButtonRequestPhone internally.
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
@@ -42,12 +44,13 @@ async def _handle_main_bot_user_login_contact_received(contact_obj, event_obj):
     numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
     await event_obj.delete()
     
-    # CRITICAL FIX for ReplyKeyboardMarkup:
-    # KeyboardButtonRequestPhone must be wrapped in KeyboardButton, and then in a list for the row
-    request_phone_button_obj = KeyboardButtonRequestPhone(strings['ask_phone_button'])
-    reply_markup = ReplyKeyboardMarkup([[KeyboardButton(request_phone_button_obj)]], resize=True)
+    # CRITICAL FIX: Use Button.request_phone directly for reply keyboard
+    # This automatically handles the internal TLObject creation correctly
+    request_phone_button_list = [Button.request_phone(strings['ask_phone_button'])]
+    # ReplyKeyboardMarkup typically takes a list of lists where inner lists are buttons
+    reply_markup_obj = ReplyKeyboardMarkup([request_phone_button_list], resize=True)
 
-    m = await event_obj.respond(strings['ask_phone_prompt'], buttons=reply_markup, parse_mode='html') # Use the correctly formed reply_markup
+    m = await event_obj.respond(strings['ask_phone_prompt'], buttons=reply_markup_obj, parse_mode='html')
 
     u=TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
     
@@ -127,12 +130,11 @@ async def handle_add_member_account_flow(e):
     uid = e.sender_id
     db.update_user_data(uid, {"$set": {"state": "awaiting_member_account_phone"}})
     
-    # CRITICAL FIX for ReplyKeyboardMarkup:
-    # KeyboardButtonRequestPhone must be wrapped in KeyboardButton
-    request_phone_button_obj = KeyboardButtonRequestPhone(strings['share_phone_number_button'])
-    request_phone_markup = ReplyKeyboardMarkup([[KeyboardButton(request_phone_button_obj)]], resize=True)
+    # CRITICAL FIX: Use Button.request_phone directly for reply keyboard
+    request_phone_button_list = [Button.request_phone(strings['share_phone_number_button'])]
+    reply_markup_obj = ReplyKeyboardMarkup([request_phone_button_list], resize=True)
     
-    await e.respond(strings['ADD_ACCOUNT_PROMPT'], buttons=request_phone_markup, parse_mode='html')
+    await e.respond(strings['ADD_ACCOUNT_PROMPT'], buttons=reply_markup_obj, parse_mode='html')
 
 
 # Helper for deleting member account
@@ -174,11 +176,11 @@ def register_all_handlers(bot_client_instance):
             db.users_db.insert_one({
                 "chat_id":s.id, "fn":s.first_name, "un":s.username,
                 "start_time":datetime.datetime.now(datetime.timezone.utc),
-                "is_banned_from_dl": False, # Retain for general bot ban
+                "is_banned_from_dl": False,
                 "user_accounts": [],
                 "adding_tasks": []
             })
-        await menus.send_start_menu(e) # This will handle sending a new message or editing appropriately
+        await menus.send_start_menu(e)
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/help", func=lambda e: e.is_private))
     async def help_command_handler(e):
@@ -191,16 +193,6 @@ def register_all_handlers(bot_client_instance):
     @_bot_client_instance.on(events.NewMessage(pattern=r"/settings", func=lambda e: e.is_private))
     async def settings_command_handler(e):
         await menus.send_settings_menu(e)
-
-    # Login command is removed as owner doesn't log in.
-    # @bot_client_instance.on(events.NewMessage(pattern=r"/login", func=lambda e: e.is_private))
-    # async def login_command_handler(e):
-    #     ...
-
-    # Logout command is removed as owner doesn't log out.
-    # @bot_client_instance.on(events.NewMessage(pattern=r"/logout", func=lambda e: e.is_private))
-    # async def logout_command_handler(e):
-    #     ...
 
     @_bot_client_instance.on(events.NewMessage(pattern=r"/addaccount", func=lambda e: e.is_private))
     async def add_member_account_command_handler(e):
@@ -257,6 +249,9 @@ def register_all_handlers(bot_client_instance):
         owner_data = db.get_user_data(uid)
         state = utils.get(owner_data, 'state')
 
+        # This `contact_handler` now ONLY handles contact shares related to member-adding accounts
+        # No main bot login with contact share anymore.
+
         if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_phone")):
             account_id_match = re.search(r'_(\d+)$', state)
             account_id = int(account_id_match.group(1)) if account_id_match else None
@@ -264,8 +259,8 @@ def register_all_handlers(bot_client_instance):
             phone_number = e.contact.phone_number
             
             # Hide the reply keyboard after receiving contact
-            await e.respond("Processing your request...", reply_markup=ReplyKeyboardMarkup([], selective=True, resize_keyboard=True))
-            # The above will hide the keyboard. If the previous message from bot had the keyboard, it should hide.
+            # You might want to delete the message that had the keyboard or send a new one
+            await e.respond("Processing your request...", reply_markup=ReplyKeyboardMarkup([], selective=True, resize_keyboard=True)) # Hide keyboard by sending an empty one
 
             if state == "awaiting_member_account_phone" and any(acc.get('phone_number') == phone_number for acc in utils.get(owner_data, 'user_accounts', [])):
                 db.update_user_data(uid, {"$set": {"state": None}})
@@ -474,7 +469,12 @@ def register_all_handlers(bot_client_instance):
             return await e.answer("Initiating another account addition...", alert=True)
         elif raw_data.startswith("no_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
-            await e.edit("Okay, no more accounts for now. You can manage your accounts via /settings.", buttons=None)
+            # This edit needs to handle cases where `e` is a callback query on a non-editable message.
+            # Best practice is to respond with a new message, or try-except the edit.
+            try:
+                await e.edit("Okay, no more accounts for now. You can manage your accounts via /settings.", buttons=None)
+            except Exception:
+                await e.respond("Okay, no more accounts for now. You can manage your accounts via /settings.", buttons=None)
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
 
@@ -625,7 +625,6 @@ def register_all_handlers(bot_client_instance):
             elif action=="retry_fsub":
                 await e.delete()
                 if await menus.check_fsub(e):await e.respond("Thanks for joining! Please use /settings to manage member adding.")
-            # Removed owner login/logout buttons from callback handler
 
             elif action == "members_adding_menu":
                 await menus.send_members_adding_menu(e, uid)
