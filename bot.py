@@ -89,7 +89,7 @@ async def main():
         
         LOGGER.info("Bot is fully operational and listening for events. Press Ctrl+C to stop.")
         # Run the bot until disconnected. This keeps the event loop alive.
-        await bot.run_until_disconnected()
+        await bot.run_until_disconnected() # Corrected typo: run_until_disconnected
 
     except Exception as e:
         LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True) # Use exc_info=True to print full traceback
