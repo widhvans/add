@@ -25,7 +25,7 @@ strings = {
     'FSUB_MESSAGE': "You must join our updates channel to use this bot.",
     'need_login': "Please login your **main** Telegram account using /login to access this feature.",
     'session_invalid': "Your session is invalid. Please login again using /login.",
-    'already_logged_in': "You are already in logged in with your main account. Use /logout to log out if needed.", # Changed "already_in_logged_in" to "already_logged_in" based on provided trace
+    'already_logged_in': "You are already logged in with your main account. Use /logout to log out if needed.",
     'ask_phone': "Please click the button below to share your phone number for login.",
     'ask_code': "Please enter the OTP you received on your Telegram account.",
     'ask_pass': "Please enter your 2FA password.",
@@ -40,13 +40,13 @@ strings = {
     'user_cooldown': "Please wait {seconds} seconds before trying again.",
 
     # New strings for phone number request specifically for ReplyKeyboardMarkup
-    'ask_phone_button': "✅ Click to Login ✅", # Button text for main login
+    'ask_phone_button': "✅ Share Phone Number ✅", # Button text for main login and add account flow
     'ask_phone_prompt': "Please click the button below to share your phone number to log in.", # Prompt for main login
 
     # Member Adding Specific Strings
     'SETTINGS_MENU_TEXT': "Choose a setting to configure for member adding:",
-    'ADD_ACCOUNT_PROMPT': "Please click the button below to share your phone number to login to the **member adding account**.", # Now only phone button
-    'share_phone_number_button': "Share Phone Number", # Button text for member adding login
+    'ADD_ACCOUNT_PROMPT': "Please click the button below to share your phone number to login to the **member adding account**.",
+    'share_phone_number_button': "Share Phone Number", # Used in handler for member adding flow phone button
 
     'ACCOUNT_ADDED_SUCCESS': "✅ Account {phone_number} added successfully! Account ID: <code>{account_id}</code>",
     'ACCOUNT_LOGIN_FAILED': "Login failed for this account. Reason: {error_message}. Please try again or check your credentials.",
