@@ -105,11 +105,13 @@ async def display_member_accounts(e, uid):
     # CRITICAL FIX: Auto-remove invalid/unsuccessful accounts from the DB
     accounts_to_remove_ids = []
     for account in accounts:
-        # An account is invalid if it's not logged in AND doesn't have a temporary session string (meaning login failed and cleanup wasn't perfect)
+        # An account is invalid if it's not logged in AND doesn't have a session string
+        # temp_login_data is a temporary state, not a persistent session.
         if not utils.get(account, 'logged_in') and not utils.get(account, 'session_string'):
             accounts_to_remove_ids.append(utils.get(account, 'account_id'))
     
     if accounts_to_remove_ids:
+        # Perform the pull operation to remove invalid accounts
         db.users_db.update_one(
             {"chat_id": uid},
             {"$pull": {"user_accounts": {"account_id": {"$in": accounts_to_remove_ids}}}}
@@ -141,10 +143,7 @@ async def display_member_accounts(e, uid):
                 status = strings['ACCOUNT_STATUS_FLOODED'].format(until_time=utils.fd(remaining_time))
             elif utils.get(account, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS:
                 status = strings['ACCOUNT_STATUS_SUSPENDED'].format(reason="Too many errors")
-        # No explicit else for status here, as the cleanup should handle truly invalid.
-        # If it's `logged_in: False` but has `session_string`, it means temporary login in progress (temp_login_data exists)
-        # This state is fine. Only if session_string is missing AND not logged in do we remove.
-
+        
         daily_adds = utils.get(account, 'daily_adds_count', 0)
         soft_errors = utils.get(account, 'soft_error_count', 0)
         
@@ -232,26 +231,21 @@ async def send_manage_adding_tasks_menu(e, uid):
     tasks = utils.get(owner_data, 'adding_tasks', [])
     
     # CRITICAL FIX: Auto-remove empty draft tasks
-    # A task is "empty" if it has no source, no targets, AND no assigned accounts.
-    tasks_to_keep = []
     tasks_to_remove_ids = []
     for task in tasks:
         if not utils.get(task, 'source_chat_id') and \
            not utils.get(task, 'target_chat_ids') and \
            not utils.get(task, 'assigned_accounts'):
             tasks_to_remove_ids.append(utils.get(task, 'task_id'))
-        else:
-            tasks_to_keep.append(task)
     
     if tasks_to_remove_ids:
-        # Perform the pull operation to remove empty drafts
         db.users_db.update_one(
             {"chat_id": uid},
             {"$pull": {"adding_tasks": {"task_id": {"$in": tasks_to_remove_ids}}}}
         )
-        # Update `tasks` variable for current display based on what's left
+        # Re-fetch tasks after removal
         owner_data = db.get_user_data(uid)
-        tasks = utils.get(owner_data, 'adding_tasks', []) # Re-fetch after cleanup
+        tasks = utils.get(owner_data, 'adding_tasks', [])
 
     if not tasks: # After cleanup, if there are still no tasks (or all were empty drafts)
         text = "You have no configured adding tasks yet. Use '➕ Create Task' to add and configure one."
@@ -264,7 +258,7 @@ async def send_manage_adding_tasks_menu(e, uid):
     text = strings['MANAGE_TASKS_HEADER']
     buttons = []
     import members_adder 
-    for task in tasks:
+    for task in tasks: # Iterate over the potentially cleaned up list of tasks
         task_id = utils.get(task, 'task_id', 'N/A')
         status = utils.get(task, 'status', 'draft')
         
@@ -426,7 +420,7 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
             nav_row.append(Button.inline("◀️ Prev", prev_callback))
         
         if total_pages > 0:
-            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop"))
+            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop')) # FIX: Corrected missing quote
 
         if page < total_pages:
             next_callback = f'm_add_set|{selection_type}|{task_id}|{page+1}'
@@ -444,7 +438,6 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
         
         await temp_msg.edit(prompt.format(task_id=task_id), buttons=buttons, parse_mode='Markdown')
     except Exception as ex:
-        # LOGGER.error(f"Chat selection error for {uid}: {ex}") # Add logging here
         back_action = f'{{"action":"m_add_task_menu", "task_id":{task_id}}}'
         await temp_msg.edit("Could not fetch chats. Please try again.", buttons=[[Button.inline("« Back", back_action)]], parse_mode='Markdown')
     finally:
