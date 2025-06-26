@@ -1,10 +1,12 @@
 from telethon.tl.custom.button import Button
 import datetime
 import time
-import config
+# Import the *instance* named 'config' from the config module
+from config import config # <- IMPORTANT CHANGE
 import utils # Import utility functions
 import db # Import database module
 from strings import strings
+from telethon.errors import UserNotParticipantError # Import this specifically
 
 # This `bot_client` will be passed from bot.py when registering handlers.
 # It represents the main TelegramClient for the bot itself.
@@ -18,7 +20,7 @@ def yesno(c):
     return [[Button.inline("Yes", f'{{"action":"yes_{c}"}}')], [Button.inline("No", f'{{"action":"no_{c}"}}')]]
 
 async def check_fsub(e):
-    # This remains in menus.py as it generates a menu/message for force sub
+    # Use config.FORCE_SUB_CHANNEL and config.OWNER_ID directly
     if not config.FORCE_SUB_CHANNEL or e.sender_id == config.OWNER_ID:
         return True
     c = config.FORCE_SUB_CHANNEL
@@ -37,7 +39,9 @@ async def check_fsub(e):
         await e.respond(strings['FSUB_MESSAGE'], buttons=btns, parse_mode='html')
         return False
     except Exception as ex:
-        # LOGGER.error(f"F-Sub Error for channel '{c}': {ex}") # LOGGER not imported here
+        # We don't have LOGGER imported directly in menus.py, but for debugging:
+        # import logging
+        # logging.getLogger(__name__).error(f"F-Sub Error for channel '{c}': {ex}")
         return True
 
 async def send_start_menu(e):
@@ -47,6 +51,7 @@ async def send_start_menu(e):
         [Button.inline("Help 💡", data='{"action":"help"}'), Button.inline("Commands 📋", data='{"action":"commands"}')],
         [Button.inline("Tutorial 🎬", data='{"action":"show_tutorial"}'), Button.url("Updates Channel 📢", url=config.UPDATES_CHANNEL_URL)]
     ]
+    # Use config.START_IMAGE_URL directly
     await e.respond(file=config.START_IMAGE_URL, message=st, buttons=btns, link_preview=False, parse_mode='html')
 
 async def send_help_menu(e):
@@ -82,40 +87,40 @@ async def send_members_adding_menu(e, uid):
 
 async def display_member_accounts(e, uid):
     owner_data = db.get_user_data(uid)
-    accounts = owner_data.get('user_accounts', [])
+    accounts = utils.get(owner_data, 'user_accounts', [])
     if not accounts:
         return await e.edit(strings['NO_ACCOUNTS_FOR_ADDING'], buttons=[[Button.inline("« Back", '{"action":"members_adding_menu"}')]], parse_mode='html')
 
     text = strings['MY_ACCOUNTS_HEADER']
     buttons = []
     for account in accounts:
-        account_id = account.get('account_id', 'N/A')
-        phone_number = account.get('phone_number', 'N/A')
+        account_id = utils.get(account, 'account_id', 'N/A')
+        phone_number = utils.get(account, 'phone_number', 'N/A')
         status = strings['ACCOUNT_STATUS_INACTIVE']
         
-        if account.get('logged_in'):
+        if utils.get(account, 'logged_in'):
             status = strings['ACCOUNT_STATUS_HEALTHY']
-            if account.get('is_banned_for_adding'):
+            if utils.get(account, 'is_banned_for_adding'):
                 status = strings['ACCOUNT_STATUS_SUSPENDED'].format(reason="Banned")
-            elif account.get('flood_wait_until', 0) > time.time():
-                remaining_time = int(account['flood_wait_until'] - time.time())
+            elif utils.get(account, 'flood_wait_until', 0) > time.time():
+                remaining_time = int(utils.get(account, 'flood_wait_until', 0) - time.time())
                 status = strings['ACCOUNT_STATUS_FLOODED'].format(until_time=utils.fd(remaining_time))
-            elif account.get('soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS:
+            elif utils.get(account, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS: # Use config.SOFT_ADD_LIMIT_ERRORS
                 status = strings['ACCOUNT_STATUS_SUSPENDED'].format(reason="Too many errors")
         else:
             status = strings['ACCOUNT_STATUS_INVALID']
 
-        daily_adds = account.get('daily_adds_count', 0)
-        soft_errors = account.get('soft_error_count', 0)
+        daily_adds = utils.get(account, 'daily_adds_count', 0)
+        soft_errors = utils.get(account, 'soft_error_count', 0)
         
         text += strings['ACCOUNT_STATUS_ENTRY'].format(
             phone_number=phone_number,
             account_id=account_id,
             status=status,
             daily_adds=daily_adds,
-            limit=config.MAX_DAILY_ADDS_PER_ACCOUNT,
+            limit=config.MAX_DAILY_ADDS_PER_ACCOUNT, # Use config.MAX_DAILY_ADDS_PER_ACCOUNT
             soft_errors=soft_errors,
-            soft_limit=config.SOFT_ADD_LIMIT_ERRORS
+            soft_limit=config.SOFT_ADD_LIMIT_ERRORS # Use config.SOFT_ADD_LIMIT_ERRORS
         )
         buttons.append([Button.inline(f"Account {phone_number}", f'{{"action":"member_account_details","account_id":{account_id}}}')])
     
@@ -125,27 +130,27 @@ async def display_member_accounts(e, uid):
 async def send_member_account_details(e, uid, account_id):
     owner_data = db.get_user_data(uid)
     account_info = utils.get(owner_data, 'user_accounts', [])
-    account_info = next((acc for acc in account_info if acc.get('account_id') == account_id), None)
+    account_info = next((acc for acc in account_info if utils.get(acc, 'account_id') == account_id), None)
 
     if not account_info:
         return await e.answer("Account not found.", alert=True)
     
-    phone_number = account_info.get('phone_number', 'N/A')
+    phone_number = utils.get(account_info, 'phone_number', 'N/A')
     status = "Inactive"
-    if account_info.get('logged_in'):
+    if utils.get(account_info, 'logged_in'):
         status = "Active"
-        if account_info.get('is_banned_for_adding'): status = "Banned"
-        elif account_info.get('flood_wait_until', 0) > time.time(): status = f"Flood Wait (until {utils.fd(account_info['flood_wait_until'] - time.time())})"
-        elif account_info.get('soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS: status = "Suspended (too many errors)"
+        if utils.get(account_info, 'is_banned_for_adding'): status = "Banned"
+        elif utils.get(account_info, 'flood_wait_until', 0) > time.time(): status = f"Flood Wait (until {utils.fd(utils.get(account_info, 'flood_wait_until', 0) - time.time())})"
+        elif utils.get(account_info, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS: status = "Suspended (too many errors)" # Use config.SOFT_ADD_LIMIT_ERRORS
     
     text = f"👤 **Account Details: {phone_number}**\n\n" \
            f"Account ID: <code>{account_id}</code>\n" \
            f"Status: {status}\n" \
-           f"Logged In: {'Yes' if account_info.get('logged_in') else 'No'}\n" \
-           f"Daily Adds: {account_info.get('daily_adds_count', 0)} / {config.MAX_DAILY_ADDS_PER_ACCOUNT}\n" \
-           f"Soft Errors Today: {account_info.get('soft_error_count', 0)} / {config.SOFT_ADD_LIMIT_ERRORS}\n" \
-           f"Last Login: {datetime.datetime.fromtimestamp(account_info['last_login_time']).strftime('%Y-%m-%d %H:%M:%S UTC') if account_info.get('last_login_time') else 'N/A'}\n" \
-           f"Last Error: {account_info.get('error_type', 'None')}\n"
+           f"Logged In: {'Yes' if utils.get(account_info, 'logged_in') else 'No'}\n" \
+           f"Daily Adds: {utils.get(account_info, 'daily_adds_count', 0)} / {config.MAX_DAILY_ADDS_PER_ACCOUNT}\n" \
+           f"Soft Errors Today: {utils.get(account_info, 'soft_error_count', 0)} / {config.SOFT_ADD_LIMIT_ERRORS}\n" \
+           f"Last Login: {datetime.datetime.fromtimestamp(utils.get(account_info, 'last_login_time', 0)).strftime('%Y-%m-%d %H:%M:%S UTC') if utils.get(account_info, 'last_login_time') else 'N/A'}\n" \
+           f"Last Error: {utils.get(account_info, 'error_type', 'None')}\n"
            
     buttons = [
         [Button.inline("Re-login Account", f'{{"action":"relogin_member_account","account_id":{account_id}}}')],
@@ -161,7 +166,7 @@ async def send_create_adding_task_menu(e, uid):
     existing_tasks = utils.get(owner_data, 'adding_tasks', [])
     next_task_id = 1
     if existing_tasks:
-        max_task_id = max(task.get('task_id', 0) for task in existing_tasks)
+        max_task_id = max(utils.get(task, 'task_id', 0) for task in existing_tasks)
         next_task_id = max_task_id + 1
 
     new_task = {
@@ -191,8 +196,7 @@ async def send_manage_adding_tasks_menu(e, uid):
 
     text = strings['MANAGE_TASKS_HEADER']
     buttons = []
-    # This import is necessary here to get chat titles
-    import members_adder 
+    import members_adder # Import here to avoid circular dependency at top level
     for task in tasks:
         task_id = utils.get(task, 'task_id', 'N/A')
         status = utils.get(task, 'status', 'draft')
@@ -270,7 +274,6 @@ async def send_adding_task_details_menu(e, uid, task_id):
     if utils.get(task, 'status') == 'active':
         buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
     elif utils.get(task, 'status') == 'paused' or utils.get(task, 'status') == 'draft' or utils.get(task, 'status') == 'completed':
-        # Only allow starting if source, target, and accounts are set
         if utils.get(task, 'source_chat_id') and utils.get(task, 'target_chat_ids') and utils.get(task, 'assigned_accounts'):
             buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
     
