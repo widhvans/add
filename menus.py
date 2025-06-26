@@ -39,11 +39,11 @@ async def check_fsub(e):
         pass
         return True
 
-async def send_main_menu(e): # Main menu for the bot's simplified interface
+async def send_main_menu(e):
     s = await e.get_sender()
     st = strings['START_TEXT'].format(user_firstname=s.first_name)
     btns = [
-        [Button.inline("🚀 Let's Go!", data='{"action":"members_adding_menu"}')] # Direct to member adding menu
+        [Button.inline("🚀 Let's Go!", data='{"action":"members_adding_menu"}')]
     ]
     try:
         await e.edit(message=st, buttons=btns, link_preview=False, parse_mode='Markdown')
@@ -70,7 +70,7 @@ async def send_commands_menu(e):
                          buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
                          parse_mode='Markdown')
 
-async def send_settings_menu(e): # This is the main members adding dashboard now
+async def send_settings_menu(e):
     text = strings['SETTINGS_MENU_TEXT']
     buttons = [
         [Button.inline("👥 Members Adding", data='{"action":"members_adding_menu"}')],
@@ -91,7 +91,7 @@ async def send_members_adding_menu(e, uid):
         [Button.inline("📝 Manage Accounts", data='{"action":"manage_member_accounts"}')],
         [Button.inline("➕ Create Task", data='{"action":"create_adding_task"}')],
         [Button.inline("⚙️ Manage Tasks", data='{"action":"manage_adding_tasks"}')],
-        [Button.inline("« Back", data='{"action":"main_menu"}')] # Back to main menu
+        [Button.inline("« Back", data='{"action":"main_menu"}')]
     ]
     try:
         await e.edit(text, buttons=buttons, parse_mode='Markdown')
@@ -103,12 +103,10 @@ async def display_member_accounts(e, uid):
     accounts = utils.get(owner_data, 'user_accounts', [])
 
     # CRITICAL FIX: Auto-remove invalid/unsuccessful accounts from the DB
-    valid_accounts = []
     accounts_to_remove_ids = []
     for account in accounts:
-        if utils.get(account, 'logged_in') and utils.get(account, 'session_string'):
-            valid_accounts.append(account)
-        else:
+        # An account is invalid if it's not logged in AND doesn't have a temporary session string (meaning login failed and cleanup wasn't perfect)
+        if not utils.get(account, 'logged_in') and not utils.get(account, 'session_string'):
             accounts_to_remove_ids.append(utils.get(account, 'account_id'))
     
     if accounts_to_remove_ids:
@@ -116,7 +114,7 @@ async def display_member_accounts(e, uid):
             {"chat_id": uid},
             {"$pull": {"user_accounts": {"account_id": {"$in": accounts_to_remove_ids}}}}
         )
-        # Refresh accounts list after removal
+        # Re-fetch accounts after removal to get the updated list
         owner_data = db.get_user_data(uid)
         accounts = utils.get(owner_data, 'user_accounts', [])
 
@@ -143,8 +141,9 @@ async def display_member_accounts(e, uid):
                 status = strings['ACCOUNT_STATUS_FLOODED'].format(until_time=utils.fd(remaining_time))
             elif utils.get(account, 'soft_error_count', 0) >= config.SOFT_ADD_LIMIT_ERRORS:
                 status = strings['ACCOUNT_STATUS_SUSPENDED'].format(reason="Too many errors")
-        else:
-            status = strings['ACCOUNT_STATUS_INVALID'] # Should ideally be caught by cleanup above if session_string is None
+        # No explicit else for status here, as the cleanup should handle truly invalid.
+        # If it's `logged_in: False` but has `session_string`, it means temporary login in progress (temp_login_data exists)
+        # This state is fine. Only if session_string is missing AND not logged in do we remove.
 
         daily_adds = utils.get(account, 'daily_adds_count', 0)
         soft_errors = utils.get(account, 'soft_error_count', 0)
@@ -265,7 +264,7 @@ async def send_manage_adding_tasks_menu(e, uid):
     text = strings['MANAGE_TASKS_HEADER']
     buttons = []
     import members_adder 
-    for task in tasks: # Now iterate over the potentially cleaned up list of tasks
+    for task in tasks:
         task_id = utils.get(task, 'task_id', 'N/A')
         status = utils.get(task, 'status', 'draft')
         
@@ -427,7 +426,7 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id, page=1):
             nav_row.append(Button.inline("◀️ Prev", prev_callback))
         
         if total_pages > 0:
-            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop'))
+            nav_row.append(Button.inline(f"Page {page}/{total_pages}", 'noop"))
 
         if page < total_pages:
             next_callback = f'm_add_set|{selection_type}|{task_id}|{page+1}'
