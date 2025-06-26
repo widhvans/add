@@ -51,8 +51,6 @@ strings = {
     'ACCOUNT_STATUS_INVALID': "❌ **Invalid Session**",
     'ACCOUNT_STATUS_INACTIVE': "⏸️ Inactive",
     'NUMPAD_CONFIRM_BUTTON': "Confirm ✅", # Not used with direct input now
-    'BUTTON_ADD_ACCOUNT': "➕ Add Account", # CRITICAL FIX: Added missing string
-    'BUTTON_ADD_MORE_ACCOUNT': "➕ Add More Account", # CRITICAL FIX: Added missing string
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
     'CREATE_TASK_PROMPT': "To create a new adding task, please select a **source chat** by its ID or username.",
@@ -61,9 +59,9 @@ strings = {
     'ASK_TARGET_CHAT_ID': "Please send the **ID or username** of the **single target chat** where members will be added (e.g., `-1001234567890` for a group, or `some_group_username`).", # New instruction for target chat input
     'TOO_MANY_SOURCE_CHATS': "You can provide a maximum of 5 source chats.",
     'INVALID_CHAT_ID_FORMAT': "Invalid chat ID or username format: `{chat_input}`. Please ensure it's a number (for ID) or a valid username.",
-    'CHAT_NOT_FOUND_OR_ACCESSIBLE': "Chat `{chat_input}` not found or not accessible by bot owner.", # Clarified message
-    'TASK_SOURCE_SET': "✅ Source chat(s) for task {task_id} set.", # Simplified
-    'TASK_TARGET_SET': "✅ Target chat for task {task_id} set.", # Simplified
+    'CHAT_NOT_FOUND_OR_ACCESSIBLE': "Chat `{chat_input}` not found or not accessible by bot owner.",
+    'TASK_SOURCE_SET': "✅ Source chat(s) for task {task_id} set.",
+    'TASK_TARGET_SET': "✅ Target chat for task {task_id} set.",
     'TASK_NO_SOURCE_SELECTED': "Please set source chat(s) first.",
     'TASK_NO_TARGET_SELECTED': "Please set the target chat first.",
     'TASK_NO_ACCOUNTS_ASSIGNED': "Please assign at least one active account to this task.",
