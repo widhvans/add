@@ -12,33 +12,31 @@ strings = {
                           "There is no need to login your own Telegram account. Use `/addaccount` to start adding accounts for member management.",
     'COMMANDS_TEXT': "Here are the commands you can use:\n\n"
                      "/start - Start the bot and see the welcome message.\n"
-                     "/help - Get information about my features.\n"
-                     "/commands - See a list of available commands.\n"
-                     "/settings - Access all member adding settings.\n"
+                     "/settings - Access all member adding settings.\n" # Removed /help, /commands
                      "/addaccount - Add a new Telegram account specifically for adding members.\n"
                      "/myaccounts - View your logged-in member adding accounts and their status.\n"
                      "/createtask - Create a new member adding task.\n"
                      "/managetasks - Manage your existing member adding tasks.\n"
                      "/stats - Get bot usage statistics (Owner only).\n"
-                     "/broadcast - Send a broadcast message to your main account's contacts (Owner only).\n", # Clarified
+                     "/broadcast - Send a broadcast message to your main account's contacts (Owner only).\n",
     'FSUB_MESSAGE': "You must join our updates channel to use this bot.",
-
-    # Removed 'need_login', 'session_invalid', 'already_logged_in', 'ask_phone', 'ask_code', 'ask_pass', etc.
-    # The bot owner does NOT login their own account anymore.
 
     'code_invalid': "Invalid OTP. Please try again.",
     'pass_invalid': "Invalid password. Please try again.",
     
-    'wrong_phone': "The phone number you sent is not associated with the current login process. Please try again.",
+    'wrong_phone': "The phone number provided is not valid or associated with the current login process. Please try again.",
     'msg_404': "Message not found or inaccessible.",
-    'user_cooldown': "Please wait {seconds} seconds before trying again.", # Still relevant for future general cooldowns
+    'user_cooldown': "Please wait {seconds} seconds before trying again.", 
 
-    # New strings for phone number request specifically for ReplyKeyboardMarkup for *member adding accounts*
-    'ADD_ACCOUNT_PROMPT': "To add a member-managing account, please click the button below to share its phone number. This will initiate the login process.",
-    'share_phone_number_button': "Share Phone Number", # Button text for member adding login phone share
+    # New strings for member adding accounts
+    'ADD_ACCOUNT_NUMBER_PROMPT': "Please send the **phone number(s)** (with country code, e.g., `+919876543210`) of the account(s) you want to add for member management.\n\n"
+                                 "**You can send multiple numbers, one per line, to add accounts in bulk.**\n\n"
+                                 "For example:\n`+919876543210\n+12345678901`", # Instructions for bulk add
+    'share_phone_number_button': "Share Phone Number", # Used in handler for member adding flow phone button (still kept for consistency but not directly used in new number prompt)
     'ADD_ANOTHER_ACCOUNT_PROMPT': "Account login successful! Would you like to add another account for member management?",
     'ASK_OTP_PROMPT': "Please enter the OTP you received on that Telegram account.",
     'ASK_PASSWORD_PROMPT': "Please enter the 2FA password for that Telegram account.",
+    'ACCOUNT_ALREADY_ADDED': "Account with phone number `{phone_number}` is already added.", # New string
 
     'ACCOUNT_ADDED_SUCCESS': "✅ Account {phone_number} added successfully! Account ID: <code>{account_id}</code>",
     'ACCOUNT_LOGIN_FAILED': "Login failed for this account. Reason: {error_message}. Please try again or check your credentials.",
@@ -54,6 +52,7 @@ strings = {
     'ACCOUNT_STATUS_INVALID': "❌ Invalid Session",
     'ACCOUNT_STATUS_INACTIVE': "⏸️ Inactive",
 
+    'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.", # Simplified and made generic
     'CREATE_TASK_PROMPT': "To create a new adding task, please first select a **source chat** from which to scrape members.",
     'TASK_SOURCE_SET': "✅ Source chat for task {task_id} set to **{chat_title}**. Now select **target chat(s)**.",
     'TASK_TARGET_SET_SINGLE': "✅ Target chat for task {task_id} set to **{chat_title}**. You can add one more or click Done.",
@@ -63,7 +62,7 @@ strings = {
     'TASK_NO_TARGET_SELECTED': "Please select at least one target chat.",
     'TASK_NO_ACCOUNTS_ASSIGNED': "Please assign at least one active account to this task.",
     'TASK_CREATED_SUCCESS': "✅ Adding task created successfully!",
-    'MANAGE_TASKS_HEADER': "⚙️ **Manage Your Adding Tasks**\n\n",
+    'MANAGE_TASKS_HEADER': "⚙️ **Your Configured Adding Tasks**\n\n", # Updated header for tasks
     'TASK_ENTRY_INFO': "• Task {task_id} ({status})\n  Source: {source_chat_title}\n  Targets: {target_chat_titles}\n  Accounts: {num_accounts} assigned",
     'TASK_STATUS_ACTIVE': "Active ▶️",
     'TASK_STATUS_PAUSED': "Paused ⏸️",
@@ -91,7 +90,7 @@ strings = {
     'PEER_FLOOD_DETECTED': "⚠️ **Peer Flood Detected!** Account <code>{account_id}</code> has hit a Peer Flood error. Suspending this account for the day to prevent a ban. Please check account activities.",
     'FLOOD_WAIT_DETECTED': "⏳ Account <code>{account_id}</code> is in flood wait for {seconds} seconds. Waiting...",
     'USER_ACCOUNT_DISCONNECTED': "❌ User account <code>{account_id}</code> disconnected or session invalid. Please re-login.",
-    'OWNER_ACCOUNT_LOGIN_REQUIRED': "You do not need to login your main account. Please use /addaccount to manage other accounts.", # Clarified
+    'OWNER_ACCOUNT_LOGIN_REQUIRED': "You do not need to login your main account. Please use /addaccount to manage other accounts.",
     'CHOOSE_ACCOUNTS_FOR_TASK': "Select accounts to assign to Task {task_id}. Selected accounts will participate in adding members for this task.",
     'ACCOUNT_ASSIGNED_TO_TASK': "✅ Account <code>{account_id}</code> assigned to Task {task_id}.",
     'ACCOUNT_UNASSIGNED_FROM_TASK': "☑️ Account <code>{account_id}</code> unassigned from Task {task_id}.",
