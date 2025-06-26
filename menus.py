@@ -402,4 +402,5 @@ async def send_chat_selection_menu(e, uid, selection_type, task_id): # Removed p
     
     db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_{selection_type}_{task_id}"}})
     
+    # This now just sends a prompt. The input is handled by private_message_handler
     await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
