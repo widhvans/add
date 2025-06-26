@@ -32,5 +32,4 @@ async def delete_after(m, d):
         else:
             await m.delete()
     except Exception as e:
-        # LOGGER.warning(f"Could not delete message after timeout: {e}") # LOGGER not imported here
-        pass # Log in the calling function if needed
+        pass
