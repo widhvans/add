@@ -16,7 +16,7 @@ def init_db():
 
         # Derive a unique database name based on the bot token for isolation
         unique_db_identifier = config.BOT_TOKEN.split(':')[0]
-        db_name = f"member_adding_bot_db_{unique_db_identifier}" # Changed for clarity and uniqueness
+        db_name = f"member_adding_bot_db_{unique_db_identifier}"
 
         users_db = mongo_client[db_name].users # This collection stores all user/owner data
         bot_settings_db = mongo_client[db_name].bot_settings
