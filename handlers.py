@@ -8,8 +8,7 @@ import re
 from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
 from telethon.tl.custom.button import Button # For inline buttons
-# Removed: ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestPhone imports
-from telethon.tl.types import ReplyKeyboardHide # Only ReplyKeyboardHide is needed for hiding keyboard
+from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestPhone, ReplyKeyboardHide # Import these
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
@@ -75,8 +74,10 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
     try:
         await client.connect()
         
+        # Check if awaiting OTP or password
         if utils.get(owner_data, 'state').startswith("awaiting_member_account_code_"):
             otp_code = input_text.strip()
+            # Ensure OTP length matches expected length if available
             if utils.get(temp_login_data, 'clen') and len(otp_code) != utils.get(temp_login_data, 'clen'):
                 numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
                 await processing_msg.delete()
@@ -89,6 +90,7 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
             await client.sign_in(password=password)
 
         # Login successful
+        # CRITICAL FIX: Save permanent data ONLY NOW.
         db.update_user_account_in_owner_doc(
             uid, account_id,
             {"$set": {
@@ -96,10 +98,10 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
                 "user_accounts.$.logged_in": True,
                 "user_accounts.$.last_login_time": time.time(),
                 "user_accounts.$.is_active_for_adding": True,
-                "user_accounts.$.temp_login_data": {}
-            }, "$unset": {"state": 1}}
+                "user_accounts.$.temp_login_data": {} # Clear temp data
+            }, "$unset": {"state": 1}} # Clear owner's state
         )
-        members_adder.USER_CLIENTS[account_id] = client
+        members_adder.USER_CLIENTS[account_id] = client # Add to active clients
 
         await processing_msg.delete()
         await e.respond(strings['ACCOUNT_ADDED_SUCCESS'].format(phone_number=phone_number, account_id=account_id), parse_mode='html')
@@ -132,7 +134,7 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
             await client.disconnect()
 
 
-# Helper for initial phone request or re-login phone request
+# Helper for initial phone request or re-login phone request (now handles adding initial skeleton to DB)
 async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone_number, current_state):
     # This function is responsible for sending the code request and setting up temp_login_data
     
@@ -325,7 +327,7 @@ def register_all_handlers(bot_client_instance):
 
         if state and (state.startswith("awaiting_member_account_relogin_phone_") or state.startswith("awaiting_member_account_number")):
             account_id_match = re.search(r'_(\d+)$', state)
-            account_id = int(account_id_match.group(1)) if account_id_match else None # account_id can be None for initial number input
+            account_id = int(account_id_match.group(1)) if account_id_match else None
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
@@ -440,8 +442,8 @@ def register_all_handlers(bot_client_instance):
         if raw_data.startswith("yes_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
             await e.answer("Initiating another account addition...", alert=True) 
-            await handle_add_member_account_flow(e) # Start the flow. It will respond with a new message.
-            return 
+            await handle_add_member_account_flow(e)
+            return
 
         elif raw_data.startswith("no_add_another_account_"):
             db.update_user_data(uid, {"$set": {"state": None}})
@@ -452,7 +454,6 @@ def register_all_handlers(bot_client_instance):
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
 
-        # ... (rest of the main_callback_handler remains the same)
         if raw_data.startswith("m_add_sc|"):
             try:
                 parts = raw_data.split("|")
