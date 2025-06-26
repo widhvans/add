@@ -80,9 +80,9 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
             # Ensure OTP length matches expected length if available (clen can be 0 or 5 in Telethon for different OTP types)
             # If clen is not 0, validate length
             if utils.get(temp_login_data, 'clen') and utils.get(temp_login_data, 'clen') != 0 and len(otp_code) != utils.get(temp_login_data, 'clen'):
-                numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
+                # Numpad is removed, so direct input means user sends the full code
                 await processing_msg.delete()
-                return await e.respond(strings['code_invalid'] + "\n" + strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
+                return await e.respond(strings['code_invalid'] + "\n" + strings['ASK_OTP_PROMPT'], parse_mode='html')
 
             await client.sign_in(phone=phone_number, code=otp_code, phone_code_hash=phone_code_hash)
             
@@ -115,8 +115,8 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
     except PhoneCodeInvalidError:
         await processing_msg.delete()
         await e.respond(strings['code_invalid'], parse_mode='html')
-        numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-        await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
+        # Numpad is removed, ask directly again
+        await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html')
     except PasswordHashInvalidError:
         await processing_msg.delete()
         await e.respond(strings['pass_invalid'], parse_mode='html')
@@ -141,7 +141,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
     
     # Hide the keyboard (if any) and send a processing message
     # CRITICAL FIX: Use 'buttons' parameter for ReplyKeyboardHide
-    processing_msg = await e.respond("Initiating login process for account...", buttons=ReplyKeyboardHide(), parse_mode='html')
+    processing_msg = await e.respond(f"Attempting to log in account: **`{phone_number}`**\n\nPlease wait...", buttons=ReplyKeyboardHide(), parse_mode='Markdown')
     
     client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
     try:
@@ -175,7 +175,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
                 "temp_login_data": { # Populate temp_login_data here
                     'phash': code_request.phone_code_hash,
                     'sess': client.session.save(), # Temporary session string
-                    'clen': code_request.type.length,
+                    'clen': code_request.type.length, # Store expected OTP length
                     'code_ok': False,
                     'need_pass': False
                 }
@@ -187,7 +187,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
                 {"$set": {"user_accounts.$.temp_login_data": {
                     'phash': code_request.phone_code_hash,
                     'sess': client.session.save(),
-                    'clen': code_request.type.length,
+                    'clen': code_request.type.length, # Store expected OTP length
                     'code_ok': False,
                     'need_pass': False
                 }}}
@@ -195,10 +195,9 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
         
         db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_code_{account_id_for_db_update}"}})
         
-        numpad=[[Button.inline(str(i),f'{{"press":{i}}}')for i in range(j,j+3)]for j in range(1,10,3)];numpad.append([Button.inline("Clear All",'{"press":"clear_all"}'),Button.inline("0",'{"press":0}'),Button.inline("⌫",'{"press":"clear"}')])
-        
+        # No numpad
         await processing_msg.delete() # Delete the "Processing..." message
-        await e.respond(strings['ASK_OTP_PROMPT'], buttons=numpad, parse_mode='html', link_preview=False)
+        await e.respond(strings['ASK_OTP_PROMPT'], parse_mode='html', link_preview=False)
 
     except Exception as ex:
         LOGGER.error(f"Error during phone number input processing: {ex}")
@@ -333,7 +332,8 @@ def register_all_handlers(bot_client_instance):
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
-            # CRITICAL FIX: Hide the reply keyboard using ReplyKeyboardHide directly in 'buttons'
+            # CRITICAL FIX: Hide the reply keyboard using ReplyKeyboardHide directly.
+            # This is correct. The previous error was due to 'reply_markup' vs 'buttons' keyword.
             await e.respond("Processing your request...", buttons=ReplyKeyboardHide(), parse_mode='html')
 
             # Handle existing number (for new add flow only)
@@ -373,7 +373,6 @@ def register_all_handlers(bot_client_instance):
                     continue
                 
                 # Initiate login steps via helper function
-                # Pass the event object directly, as it needs to respond to the user.
                 await _initiate_member_account_login_flow(e, uid, None, phone_number, state) # account_id is None for new adds
                 
                 # If a login was initiated, assume we're waiting for OTP for that number
@@ -456,7 +455,6 @@ def register_all_handlers(bot_client_instance):
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
 
-        # ... (rest of the main_callback_handler remains the same)
         if raw_data.startswith("m_add_sc|"):
             try:
                 parts = raw_data.split("|")
