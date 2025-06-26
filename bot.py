@@ -1,84 +1,136 @@
 import logging
-from pymongo.mongo_client import MongoClient
-from pymongo.server_api import ServerApi
+import asyncio
+from telethon import TelegramClient
+
 from config import config
+import db
+import handlers
+import menus
+import members_adder
 
+# --- Logging Setup ---
+# Configure logging to output to console and file for robust tracking
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO, # Set to INFO for general activity, DEBUG for more verbose messages
+    handlers=[
+        logging.StreamHandler(), # Output to console
+        logging.FileHandler('bot.log', mode='a') # Output to a file named bot.log
+    ]
+)
 LOGGER = logging.getLogger(__name__)
+# --- End Logging Setup ---
 
-mongo_client = None
-users_db = None
-bot_settings_db = None
+BOT_USERNAME = None
+# Initialize the TelegramClient instance
+bot = TelegramClient('bot_session', config.API_ID, config.API_HASH)
 
-def init_db():
-    global mongo_client, users_db, bot_settings_db
+async def main():
+    global BOT_USERNAME
     try:
-        mongo_client = MongoClient(config.MONGODB_URL, server_api=ServerApi('1'))
+        LOGGER.info("Starting bot initialization process...")
+        
+        # Initialize MongoDB connection
+        db.init_db() 
+        LOGGER.info("MongoDB connection initialized.")
+        
+        # Connect the bot client to Telegram
+        LOGGER.info("Connecting bot to Telegram servers...")
+        await bot.start(bot_token=config.BOT_TOKEN)
+        me = await bot.get_me()
+        BOT_USERNAME = me.username
+        LOGGER.info(f"Bot started as @{BOT_USERNAME}. Telegram API connection successful.")
+        
+        # --- CRITICAL FIX: Register handlers *after* the bot client is fully initialized and connected ---
+        # Pass the bot instance to the handlers module so it can register events
+        handlers.register_all_handlers(bot) 
+        LOGGER.info("All event handlers registered successfully.")
+        
+        # Pass the config instance to members_adder module (as it doesn't import config directly)
+        members_adder.set_config_instance(config)
+        
+        LOGGER.info("Initializing member adding clients and tasks from database...")
+        
+        # Re-initialize any active member adding clients and tasks from DB
+        all_owners = db.users_db.find({})
+        member_account_count = 0
+        active_adding_tasks_count = 0
+        for owner_doc in all_owners:
+            owner_id = owner_doc.get('chat_id')
+            # Connect all user clients for adding
+            for acc in owner_doc.get('user_accounts', []):
+                acc_id = acc.get('account_id')
+                # Only try to connect if it's marked as logged_in and has a session string
+                if acc_id and acc.get('logged_in') and acc.get('session_string'):
+                    client = await members_adder.get_user_client(acc_id)
+                    if client:
+                        LOGGER.info(f"Loaded and connected member adding client {acc_id} for owner {owner_id}.")
+                        member_account_count += 1
+                else:
+                    # Log if an account will be cleaned up to provide feedback
+                    if not acc.get('logged_in') or not acc.get('session_string'):
+                        LOGGER.warning(f"Account {acc_id} for owner {owner_id} is not logged in or has no valid session string. It will be removed from 'Manage Accounts' display.")
 
-        unique_db_identifier = config.BOT_TOKEN.split(':')[0]
-        db_name = f"member_adding_bot_db_{unique_db_identifier}"
 
-        users_db = mongo_client[db_name].users
-        bot_settings_db = mongo_client[db_name].bot_settings
-        mongo_client.admin.command('ping')
-        LOGGER.info(f"Successfully connected to MongoDB. Using database: {db_name}")
+            # Restart active adding tasks
+            for task in owner_doc.get('adding_tasks', []):
+                if task.get('is_active'):
+                    LOGGER.info(f"Attempting to restart active adding task {task.get('task_id')} for owner {owner_id}")
+                    # Temporarily set to paused to ensure clean restart process
+                    db.update_task_in_owner_doc(
+                        owner_id, task.get('task_id'),
+                        {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}}
+                    )
+                    # This function internally checks for active/valid accounts before actually starting
+                    await members_adder.start_adding_task(owner_id, task.get('task_id'))
+                    active_adding_tasks_count += 1
+        
+        LOGGER.info(f"Member Adding Initialization complete. Loaded {member_account_count} accounts and restarted {active_adding_tasks_count} tasks.")
+        
+        LOGGER.info("Bot is fully operational and listening for events. Press Ctrl+C to stop.")
+        # Run the bot until disconnected. This keeps the event loop alive.
+        await bot.run_until_disconnected()
+
     except Exception as e:
-        LOGGER.critical(f"CRITICAL ERROR: Failed to connect to MongoDB: {e}. Exiting.")
-        exit(1)
+        LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True)
+    finally:
+        LOGGER.info("Stopping bot and performing cleanup...")
+        
+        # Stop all member adding clients (from members_adder.USER_CLIENTS)
+        for client in list(members_adder.USER_CLIENTS.values()):
+            if client.is_connected():
+                await client.disconnect()
+                LOGGER.info(f"Disconnected member adding client: {client.session.get_update_info()}")
+        
+        # Cancel all active adding tasks
+        for task_id in list(members_adder.ACTIVE_ADDING_TASKS.keys()):
+            if task_id in members_adder.ACTIVE_ADDING_TASKS:
+                task = members_adder.ACTIVE_ADDING_TASKS[task_id]
+                if not task.done(): # Check if task is still running
+                    task.cancel() # Request cancellation
+                    try:
+                        await task # Await cancellation to complete
+                    except asyncio.CancelledError:
+                        LOGGER.info(f"Task {task_id} successfully cancelled during shutdown.")
+                del members_adder.ACTIVE_ADDING_TASKS[task_id]
 
-def close_db():
-    if mongo_client:
-        mongo_client.close()
-        LOGGER.info("MongoDB connection closed.")
-
-def get_user_data(user_id):
-    return users_db.find_one({"chat_id": user_id})
-
-def update_user_data(user_id, update_query):
-    # This function is used for top-level updates on the user document (e.g., 'state', pushing/pulling user_accounts)
-    return users_db.update_one({"chat_id": user_id}, update_query)
-
-def find_user_account_in_owner_doc(owner_id, account_id):
-    owner_data = users_db.find_one({"chat_id": owner_id})
-    if owner_data:
-        return next((acc for acc in owner_data.get('user_accounts', []) if acc.get('account_id') == account_id), None)
-    return None
-
-# CRITICAL FIX: Modified update_user_account_in_owner_doc to correctly use arrayFilters
-def update_user_account_in_owner_doc(owner_id, account_id, update_fields_dict):
-    """
-    Updates specific fields of a user account within the 'user_accounts' array
-    for a given owner, using arrayFilters for precise targeting.
-    
-    update_fields_dict should be a dictionary like:
-    {"user_accounts.$[account].logged_in": True, "user_accounts.$[account].temp_login_data": {}}
-    """
-    
-    # We construct the update query with the positional filtered operator "$[account]"
-    # and provide the arrayFilters to specify which 'account' element to apply it to.
-    
-    # Example: update_fields_dict = {
-    #   "user_accounts.$[account].session_string": "new_session",
-    #   "user_accounts.$[account].logged_in": True
-    # }
-    
-    # array_filters defines which element is referred to by '$[account]'
-    array_filters = [{"account.account_id": account_id}]
-
-    return users_db.update_one(
-        {"chat_id": owner_id}, # Main filter to find the owner's document
-        {"$set": update_fields_dict}, # Use $set with the positional filtered operator
-        array_filters=array_filters # Specify the filter for the array element
-    )
+        # Clean up any residual login clients that might be active but not fully processed
+        # This is a safety net for incomplete logins
+        if hasattr(handlers, 'ONGOING_LOGIN_CLIENTS'): # Check if attribute exists
+            for user_id in list(handlers.ONGOING_LOGIN_CLIENTS.keys()):
+                client = handlers.ONGOING_LOGIN_CLIENTS.pop(user_id)
+                if client.is_connected():
+                    await client.disconnect()
+                    LOGGER.info(f"Disconnected leftover temporary login client for user {user_id}")
 
 
-def get_task_in_owner_doc(owner_id, task_id):
-    owner_data = users_db.find_one({"chat_id": owner_id})
-    if owner_data:
-        return next((t for t in owner_data.get('adding_tasks', []) if t.get('task_id') == task_id), None)
-    return None
+        db.close_db() # Close MongoDB connection
+        LOGGER.info("All processes stopped. Bot gracefully shut down.")
 
-def update_task_in_owner_doc(owner_id, task_id, update_query):
-    # This also needs to be updated to use arrayFilters if updating nested fields in 'adding_tasks' array
-    # For now, it might be fine if it only updates top-level task fields or uses $set for a known element.
-    # If you encounter similar errors with tasks, modify this function too.
-    return users_db.update_one({"chat_id": owner_id, "adding_tasks.task_id": task_id}, update_query)
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        LOGGER.info("Bot stopped manually by KeyboardInterrupt.")
+    except Exception as final_e:
+        logging.critical(f"Unhandled exception during final shutdown: {final_e}", exc_info=True)
