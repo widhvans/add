@@ -133,7 +133,6 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         LOGGER.info(f"2FA required for account {account_id}.")
         await processing_msg.delete()
         db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_password_{account_id}"}})
-        # No need to set need_pass in DB anymore as we transition state directly
         await e.respond(strings['ASK_PASSWORD_PROMPT'], parse_mode='html')
     except (PhoneCodeInvalidError, PasswordHashInvalidError, PhoneCodeExpiredError) as ex: # CRITICAL FIX: Catch PhoneCodeExpiredError
         LOGGER.warning(f"Login failed for account {account_id} with invalid credentials: {ex}")
@@ -147,7 +146,8 @@ async def _handle_member_account_login_step(e, uid, account_id, input_text):
         else: # PasswordHashInvalidError
             error_message = strings['pass_invalid']
 
-        db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}}) # Remove incomplete account
+        # CRITICAL FIX: Remove the incomplete account on any login failure
+        db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id}}})
         db.update_user_data(uid, {"$unset": {"state": 1}}) # Clear owner's state
 
         if uid in ONGOING_LOGIN_CLIENTS: # Clean up client from temporary storage
@@ -456,6 +456,55 @@ def register_all_handlers(bot_client_instance):
         elif state and state.startswith("awaiting_member_account_password_"):
             account_id = int(state.split('_')[-1])
             await _handle_member_account_login_step(e, uid, account_id, e.text)
+        elif state and state.startswith("awaiting_chat_input_source_"): # New handler for source chat input
+            task_id = int(state.split('_')[-1])
+            chat_inputs = e.text.strip().split('\n')
+            source_chat_ids = []
+            
+            if len(chat_inputs) > 5: # Limit source chats to 5
+                return await e.respond(strings['TOO_MANY_SOURCE_CHATS'], parse_mode='Markdown')
+
+            for chat_input in chat_inputs:
+                chat_id_or_username = chat_input.strip()
+                if not chat_id_or_username: continue
+
+                try:
+                    # Attempt to resolve entity via bot_client
+                    entity = await _bot_client_instance.get_entity(chat_id_or_username)
+                    source_chat_ids.append(entity.id)
+                except Exception as ex:
+                    LOGGER.warning(f"Could not resolve source chat: {chat_input}: {ex}")
+                    await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input), parse_mode='Markdown')
+                    return # Stop process if any chat is invalid
+
+            if source_chat_ids:
+                db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.source_chat_ids": source_chat_ids}})
+                db.update_user_data(uid, {"$unset": {"state": 1}}) # Clear state
+                await e.respond(strings['TASK_SOURCE_SET'].format(task_id=task_id), parse_mode='Markdown')
+                await menus.send_adding_task_details_menu(e, uid, task_id)
+            else:
+                await e.respond(strings['INVALID_CHAT_ID_FORMAT'].format(chat_input="Provided input"), parse_mode='Markdown')
+
+        elif state and state.startswith("awaiting_chat_input_target_"): # New handler for target chat input
+            task_id = int(state.split('_')[-1])
+            chat_input = e.text.strip()
+            
+            if not chat_input:
+                return await e.respond("Please provide a single target chat ID or username.", parse_mode='Markdown')
+
+            try:
+                entity = await _bot_client_instance.get_entity(chat_input)
+                target_chat_id = entity.id
+            except Exception as ex:
+                LOGGER.warning(f"Could not resolve target chat: {chat_input}: {ex}")
+                await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input), parse_mode='Markdown')
+                return
+
+            db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.target_chat_id": target_chat_id}})
+            db.update_user_data(uid, {"$unset": {"state": 1}}) # Clear state
+            await e.respond(strings['TASK_TARGET_SET'].format(task_id=task_id), parse_mode='Markdown')
+            await menus.send_adding_task_details_menu(e, uid, task_id)
+
         else:
             await e.respond("I'm a dedicated member adding bot! Please use the commands or buttons to interact with me. Use /help for more info.")
 
@@ -519,49 +568,23 @@ def register_all_handlers(bot_client_instance):
         if raw_data.startswith("m_add_sc|"):
             try:
                 parts = raw_data.split("|")
-                _, chat_id, selection_type, task_id, page = parts
-                chat_id = int(chat_id)
-                task_id = int(task_id)
-                page = int(page)
+                _, chat_id_str, selection_type, task_id_str, page_str = parts # page_str is now obsolete
+                chat_id = int(chat_id_str)
+                task_id = int(task_id_str)
+                # No page for direct input, but keep parsing if old data exists
 
-                if not owner_data: return await e.answer("User data not found. Please /start again.", alert=True)
-                
-                current_task_doc = db.get_task_in_owner_doc(uid, task_id)
-                if not current_task_doc: return await e.answer("Adding task not found.", alert=True)
-
-                if selection_type == 'from':
-                    db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.source_chat_id": chat_id}})
-                    popup_text = strings['TASK_SOURCE_SET'].format(task_id=task_id, chat_title=await members_adder.get_chat_title(_bot_client_instance, chat_id))
-                    await e.answer(utils.strip_html(popup_text), alert=True)
-                    await menus.send_adding_task_details_menu(e, uid, task_id)
-                elif selection_type == 'to':
-                    target_chats = utils.get(current_task_doc, 'target_chat_ids', [])
-                    if chat_id in target_chats:
-                        target_chats.remove(chat_id)
-                        popup_text = strings['TASK_TARGET_UNSET'].format(task_id=task_id, chat_title=await members_adder.get_chat_title(_bot_client_instance, chat_id))
-                    elif len(target_chats) < 2:
-                        target_chats.append(chat_id)
-                        popup_text = strings['AF_ERROR_TO_FULL']
-                        return await e.answer(utils.strip_html(popup_text), alert=True)
-                    
-                    db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.target_chat_ids": target_chats}})
-                    await e.answer(utils.strip_html(popup_text), alert=True)
-                    # We are using direct ID input now, not interactive chat selection menu
-                    # So, no need to call menus.send_chat_selection_menu
-                    await menus.send_adding_task_details_menu(e, uid, task_id) # Redirect to task details
-            except Exception as ex:
-                LOGGER.error(f"Error processing compact callback 'm_add_sc': {ex}")
-                await e.answer("An error occurred during chat selection.", alert=True)
-            return
+                # This branch handles the legacy interactive chat selection if that's still somehow triggered.
+                # Since we are moving to direct ID input, this specific part of the flow will become unused
+                # unless a menu is somehow regenerated with old callback data.
+                await e.answer("Please input chat ID/username directly.", alert=True)
+                return
 
         elif raw_data.startswith("m_add_set|"):
             try:
-                # This callback is for setting source/target via direct ID input.
-                # It does not navigate to an interactive chat selection menu anymore.
-                # Instead, it sets the state to await text input.
-                _, selection_type, task_id, page = raw_data.split("|") # page is now irrelevant
-                task_id = int(task_id)
+                _, selection_type, task_id_str, page_str = raw_data.split("|") # page_str is now obsolete
+                task_id = int(task_id_str)
                 
+                # This part is now exclusively for setting state for direct chat ID input
                 prompt_key = ""
                 if selection_type == 'from':
                     prompt_key = 'ASK_SOURCE_CHAT_ID'
@@ -718,9 +741,9 @@ def register_all_handlers(bot_client_instance):
                 task_id = utils.get(j, 'task_id')
                 task_to_start = db.get_task_in_owner_doc(uid, task_id)
                 
-                if not utils.get(task_to_start, 'source_chat_id'):
+                if not utils.get(task_to_start, 'source_chat_ids'): # Changed to source_chat_ids
                     return await e.answer(strings['TASK_NO_SOURCE_SELECTED'], alert=True)
-                if not utils.get(task_to_start, 'target_chat_ids'):
+                if not utils.get(task_to_start, 'target_chat_id'): # Changed to target_chat_id
                     return await e.answer(strings['TASK_NO_TARGET_SELECTED'], alert=True)
                 if not utils.get(task_to_start, 'assigned_accounts'):
                     return await e.answer(strings['TASK_NO_ACCOUNTS_ASSIGNED'], alert=True)
@@ -760,10 +783,9 @@ def register_all_handlers(bot_client_instance):
             
             state = utils.get(owner_data, 'state')
             
-            # CRITICAL FIX: Removed numpad logic as it's no longer used.
-            # This 'if state and (state.startswith("awaiting_member_account_code_") ...' was only for numpad clicks.
-            # The direct text input is handled in private_message_handler.
-            await e.answer("Unknown input. Please use the menu buttons or commands.")
+            # This handles OTP numpad presses (if it were still enabled for 2FA, or if a bug re-introduces it)
+            # Given that we removed the numpad, this part is now for callback query presses that are unexpected.
+            await e.answer("Unknown input. Please use the menu buttons or send the OTP/password directly.")
 
         except (json.JSONDecodeError, KeyError):
             await e.answer("An unknown error occurred.")
