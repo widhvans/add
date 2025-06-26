@@ -1,14 +1,14 @@
 import os
 
 class Config:
-    API_ID = int(os.environ.get("API_ID", "7320891454:AAHp3AAIZK2RKIkWyYIByB_fSEq9Xuk9-bk"))
-    API_HASH = os.environ.get("API_HASH", "YOUR_API_HASH")
-    BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
-    MONGODB_URL = os.environ.get("MONGODB_URL", "YOUR_MONGODB_URL")
-    OWNER_ID = int(os.environ.get("OWNER_ID", "YOUR_OWNER_ID"))
+    API_ID = int(os.environ.get("API_ID", "10389378"))
+    API_HASH = os.environ.get("API_HASH", "cdd5c820cb6abeecaef38e2bb8db4860")
+    BOT_TOKEN = os.environ.get("BOT_TOKEN", "7320891454:AAHp3AAIZK2RKIkWyYIByB_fSEq9Xuk9-bk")
+    MONGODB_URL = os.environ.get("MONGODB_URL", "mongodb+srv://soniji:chaloji@cluster0.i5zy74f.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+    OWNER_ID = int(os.environ.get("OWNER_ID", "1938030055"))
     UPDATES_CHANNEL_URL = os.environ.get("UPDATES_CHANNEL_URL", "https://t.me/your_updates_channel")
     FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL", None) # Can remove if not needed
-    START_IMAGE_URL = os.environ.get("START_IMAGE_URL", "https://telegra.ph/file/0c9a4d8b6c4e0f4f9a7d0.jpg")
+    START_IMAGE_URL = os.environ.get("START_IMAGE_URL", "https://iili.io/FATfoQV.md.jpg")
 
     MAX_DAILY_ADDS_PER_ACCOUNT = int(os.environ.get("MAX_DAILY_ADDS_PER_ACCOUNT", 20))
     SOFT_ADD_LIMIT_ERRORS = int(os.environ.get("SOFT_ADD_LIMIT_ERRORS", 15))
