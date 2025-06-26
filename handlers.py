@@ -185,13 +185,6 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
     # Hide the keyboard (if any) and send a processing message
     processing_msg = await e.respond(f"Attempting to log in account: **`{phone_number}`**\n\nPlease wait...", buttons=ReplyKeyboardHide(), parse_mode='Markdown')
     
-    # CRITICAL FIX: Ensure the client is new and not reused from a previous failed attempt without cleanup
-    if uid in ONGOING_LOGIN_CLIENTS:
-        client_to_clean = ONGOING_LOGIN_CLIENTS.pop(uid)
-        if client_to_clean.is_connected():
-            await client_to_clean.disconnect()
-            LOGGER.info(f"Cleaned up stale client before new code request for user {uid}")
-
     client = TelegramClient(StringSession(), config.API_ID, config.API_HASH, **config.device_info)
     try:
         await client.connect()
@@ -394,7 +387,6 @@ def register_all_handlers(bot_client_instance):
             
             phone_number = e.contact.phone_number.replace(" ", "") # Clean the phone number
 
-            # Hide the reply keyboard using ReplyKeyboardHide directly.
             await e.respond("Processing your request...", buttons=ReplyKeyboardHide(), parse_mode='html')
 
             # Handle existing number (for new add flow only)
@@ -456,7 +448,9 @@ def register_all_handlers(bot_client_instance):
         elif state and state.startswith("awaiting_member_account_password_"):
             account_id = int(state.split('_')[-1])
             await _handle_member_account_login_step(e, uid, account_id, e.text)
-        elif state and state.startswith("awaiting_chat_input_source_"): # New handler for source chat input
+        
+        # New: Handling chat ID input for task configuration
+        elif state and state.startswith("awaiting_chat_input_source_"):
             task_id = int(state.split('_')[-1])
             chat_inputs = e.text.strip().split('\n')
             source_chat_ids = []
@@ -485,7 +479,7 @@ def register_all_handlers(bot_client_instance):
             else:
                 await e.respond(strings['INVALID_CHAT_ID_FORMAT'].format(chat_input="Provided input"), parse_mode='Markdown')
 
-        elif state and state.startswith("awaiting_chat_input_target_"): # New handler for target chat input
+        elif state and state.startswith("awaiting_chat_input_target_"):
             task_id = int(state.split('_')[-1])
             chat_input = e.text.strip()
             
@@ -565,23 +559,11 @@ def register_all_handlers(bot_client_instance):
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
 
-        if raw_data.startswith("m_add_sc|"):
+        # CRITICAL FIX: Restructured m_add_sc and m_add_set to remove SyntaxError
+        # Handle callbacks for setting Source/Target chats (direct ID input flow)
+        if raw_data.startswith("m_add_set|"): # From "Set Source/Target Chat" buttons in Task Details menu
             try:
-                parts = raw_data.split("|")
-                _, chat_id_str, selection_type, task_id_str, page_str = parts # page_str is now obsolete
-                chat_id = int(chat_id_str)
-                task_id = int(task_id_str)
-                # No page for direct input, but keep parsing if old data exists
-
-                # This branch handles the legacy interactive chat selection if that's still somehow triggered.
-                # Since we are moving to direct ID input, this specific part of the flow will become unused
-                # unless a menu is somehow regenerated with old callback data.
-                await e.answer("Please input chat ID/username directly.", alert=True)
-                return
-
-        elif raw_data.startswith("m_add_set|"):
-            try:
-                _, selection_type, task_id_str, page_str = raw_data.split("|") # page_str is now obsolete
+                _, selection_type, task_id_str = raw_data.split("|") # page_str is no longer part of this action
                 task_id = int(task_id_str)
                 
                 # This part is now exclusively for setting state for direct chat ID input
@@ -595,10 +577,10 @@ def register_all_handlers(bot_client_instance):
                 
                 await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
             except Exception as ex:
-                LOGGER.error(f"Error processing compact callback 'm_add_set': {ex}")
-                await e.answer("An error occurred.", alert=True)
-            return
-        
+                LOGGER.error(f"Error processing compact callback 'm_add_set': {ex}", exc_info=True)
+                await e.answer("An error occurred. Please try again.", alert=True)
+            return # IMPORTANT: Return after handling this callback
+
         elif raw_data.startswith("m_add_assign_acc|"):
             try:
                 _, task_id_str, account_id_str = raw_data.split("|")
@@ -621,7 +603,7 @@ def register_all_handlers(bot_client_instance):
                 await e.answer(utils.strip_html(popup_text), alert=True)
                 await menus.send_assign_accounts_menu(e, uid, task_id)
             except Exception as ex:
-                LOGGER.error(f"Error processing 'm_add_assign_acc' callback: {ex}")
+                LOGGER.error(f"Error processing 'm_add_assign_acc' callback: {ex}", exc_info=True)
                 await e.answer("An error occurred.", alert=True)
             return
 
@@ -656,7 +638,7 @@ def register_all_handlers(bot_client_instance):
                     ban_message = strings['BAN_NOTIFICATION_MESSAGE']
                     await _bot_client_instance.send_message(user_id_to_ban, ban_message, parse_mode='html')
                 except Exception as ex:
-                    LOGGER.error(f"Failed to send ban notification to {user_id_to_ban}: {ex}")
+                    LOGGER.error(f"Failed to send ban notification to {user_id_to_ban}: {ex}", exc_info=True)
 
                 await e.edit("✅ User has been **banned** and notified.")
                 return
@@ -681,7 +663,7 @@ def register_all_handlers(bot_client_instance):
                                 asyncio.create_task(utils.delete_after(sent_video[0], 600))
                             await e.answer()
                         except Exception as ex:
-                            LOGGER.error(f"Tutorial forward failed: {ex}")
+                            LOGGER.error(f"Tutorial forward failed: {ex}", exc_info=True)
                             await e.answer(utils.strip_html("Could not fetch the tutorial video."), alert=True)
                     else:
                         popup_text = strings['TUTORIAL_NOT_SET_MSG']
@@ -785,7 +767,7 @@ def register_all_handlers(bot_client_instance):
             
             # This handles OTP numpad presses (if it were still enabled for 2FA, or if a bug re-introduces it)
             # Given that we removed the numpad, this part is now for callback query presses that are unexpected.
-            await e.answer("Unknown input. Please use the menu buttons or send the OTP/password directly.")
+            await e.answer("Please send the OTP directly as a message.") # Fallback for unexpected numpad-like presses
 
         except (json.JSONDecodeError, KeyError):
             await e.answer("An unknown error occurred.")
