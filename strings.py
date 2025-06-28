@@ -56,28 +56,28 @@ strings = {
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
     'CREATE_TASK_PROMPT': "To create a new adding task, please select a **source chat** by its ID or username.",
-    'ASK_SOURCE_CHAT_ID': "Please send the **ID(s) or username(s)** of the chat(s) from which to scrape members (e.g., `-1001234567890` or `channel_username`).\n\n"
-                          "You can send **multiple source chats (up to 5), one per line**.",
-    'ASK_TARGET_CHAT_ID': "Please send the **ID or username** of the **single target chat** where members will be added (e.g., `-1001234567890` or `group_username`).",
+    'ASK_SOURCE_CHAT_ID': "Please send the **ID or username** of the chat from which to scrape members (e.g., `-1001234567890` for a channel, or `some_channel_username`).\n\n"
+                          "You can send **multiple source chats (up to 5), one ID/username per line**.", # New instruction for source chat input
+    'ASK_TARGET_CHAT_ID': "Please send the **ID or username** of the **single target chat** where members will be added (e.g., `-1001234567890` for a group, or `some_group_username`).", # New instruction for target chat input
     'TOO_MANY_SOURCE_CHATS': "You can provide a maximum of 5 source chats.",
     'INVALID_CHAT_ID_FORMAT': "Invalid chat ID or username format: `{chat_input}`. Please ensure it's a number (for ID) or a valid username.",
-    'CHAT_NOT_FOUND_OR_ACCESSIBLE': "Chat `{chat_input}` not found or I can't access it. Please make sure my accounts have joined it or it's public.",
+    'CHAT_NOT_FOUND_OR_ACCESSIBLE': "Chat `{chat_input}` not found or not accessible by bot owner.",
     'TASK_SOURCE_SET': "✅ Source chat(s) for task {task_id} set.",
     'TASK_TARGET_SET': "✅ Target chat for task {task_id} set.",
     'TASK_NO_SOURCE_SELECTED': "Please set source chat(s) first.",
     'TASK_NO_TARGET_SELECTED': "Please set the target chat first.",
-    'TASK_NO_ACCOUNTS_ASSIGNED': "Please assign at least one active account to this task. (This is now done automatically on task creation).",
+    'TASK_NO_ACCOUNTS_ASSIGNED': "Please assign at least one active account to this task.",
     'TASK_CREATED_SUCCESS': "✅ Adding task created successfully!",
     'MANAGE_TASKS_HEADER': "⚙️ **Your Configured Adding Tasks**\n\n",
-    'TASK_ENTRY_INFO': "• Task {task_id} ({status})\n  Source: {source_chat_title}\n  Target: {target_chat_titles}\n  Accounts: {num_accounts} assigned",
+    'TASK_ENTRY_INFO': "• Task {task_id} ({status})\n  Source: {source_chat_title}\n  Targets: {target_chat_titles}\n  Accounts: {num_accounts} assigned",
     'TASK_STATUS_ACTIVE': "Active ▶️",
     'TASK_STATUS_PAUSED': "Paused ⏸️",
     'TASK_STATUS_DRAFT': "Draft 📝",
     'TASK_STATUS_COMPLETED': "Completed ✅",
 
-    'SELECT_SOURCE_CHAT': "Select the chat from which to scrape members for Task {task_id}:", # Obsolete
-    'SELECT_TARGET_CHAT': "Select the chat(s) where members will be added for Task {task_id}:", # Obsolete
-    'TASK_DETAILS_HEADER': "📝 **Task {task_id} Details**\n\nStatus: {status}\n\n**Source Chat(s):**\n{source_chat_info}\n\n**Target Chat:**\n{target_chat_info}\n\n**Assigned Accounts:**\n{assigned_accounts_info}\n\nTotal Members Added: {total_added}",
+    'SELECT_SOURCE_CHAT': "Select the chat from which to scrape members for Task {task_id}:", # Original menu style, might be obsolete
+    'SELECT_TARGET_CHAT': "Select the chat(s) where members will be added for Task {task_id}:", # Original menu style, might be obsolete
+    'TASK_DETAILS_HEADER': "📝 **Task {task_id} Details**\n\nStatus: {status}\nSource: {source_chat_info}\nTargets: {target_chat_info}\nAssigned Accounts: {assigned_accounts_info}\nTotal Members Added: {total_added}",
     'TASK_STARTING': "Starting adding task {task_id}...",
     'TASK_PAUSING': "Pausing adding task {task_id}...",
     'TASK_STOPPING': "Stopping adding task {task_id}...",
@@ -102,11 +102,6 @@ strings = {
     'ACCOUNT_UNASSIGNED_FROM_TASK': "☑️ Account `{account_id}` unassigned from Task {task_id}.",
     'NO_ACCOUNTS_SELECTED_FOR_TASK': "Please select at least one account for this task.",
     'ACCOUNTS_UPDATED_FOR_TASK': "✅ Accounts updated for Task {task_id}.",
-    
-    # NEW STRINGS FOR AUTO-JOIN
-    'ACCOUNTS_JOINING_CHAT': "Attempting to join the specified chat with all your active accounts. Please wait...",
-    'ACCOUNTS_JOIN_COMPLETE': "✅ Join process complete.\n- Success/Already Joined: {success_count}\n- Failed: {fail_count}",
-
     'QUEUE_FULL_MESSAGE': "⚠️ Your bot owner command queue is full. Please wait.",
     'QUEUE_MESSAGE': "✅ Your request has been added to the queue. There are {queue_size} items ahead of you.",
     'BROADCAST_STARTED': "Starting broadcast to your main contacts...",
