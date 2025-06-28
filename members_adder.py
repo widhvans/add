@@ -11,37 +11,34 @@ from telethon.errors import (
     UserPrivacyRestrictedError,
     UserAlreadyParticipantError,
     UserBlockedError,
-    InputUserDeactivatedError
+    InputUserDeactivatedError,
+    ChannelPrivateError,
+    MessageNotModifiedError,
 )
 from telethon.tl.types import ChannelParticipantsRecent
-from telethon.tl.functions.channels import GetParticipantsRequest
+from telethon.tl.functions.channels import GetParticipantsRequest, JoinChannelRequest
 
-# REMOVED: import config  <-- This line is GONE
 import db
 import utils
 from strings import strings
 
 LOGGER = logging.getLogger(__name__)
 
-# GLOBAL VARIABLES TO BE SET EXTERNALLY
 bot_client = None
-current_config_instance = None # NEW: This will hold the config instance
+current_config_instance = None
 
 def set_bot_client(client):
     global bot_client
     bot_client = client
 
-# NEW FUNCTION: To set the config instance
 def set_config_instance(cfg):
     global current_config_instance
     current_config_instance = cfg
 
-# Global dictionaries for managing active adding tasks and user clients
 ACTIVE_ADDING_TASKS = {}
 USER_CLIENTS = {}
 
 async def run_user_broadcast(uid, message_to_send):
-    # Use current_config_instance instead of config
     status_msg = await bot_client.send_message(uid, strings['BROADCAST_STARTED'], parse_mode='html')
     owner_data = db.get_user_data(uid)
     
@@ -95,7 +92,6 @@ async def run_user_broadcast(uid, message_to_send):
         ), parse_mode='html')
 
 async def get_user_client(user_account_id):
-    # Use current_config_instance instead of config
     if user_account_id in USER_CLIENTS and USER_CLIENTS[user_account_id].is_connected():
         return USER_CLIENTS[user_account_id]
 
@@ -136,14 +132,13 @@ async def get_user_client(user_account_id):
             await client.disconnect()
         return None
 
-async def scrape_members(client, source_chat_id, limit=None): # REMOVED: limit=config.MEMBER_SCRAPE_LIMIT
-    # Use current_config_instance.MEMBER_SCRAPE_LIMIT if limit is not provided
+async def scrape_members(client, source_chat_id, limit=None):
     actual_limit = limit if limit is not None else current_config_instance.MEMBER_SCRAPE_LIMIT
 
     members = []
     offset = 0
-    while True:
-        try:
+    try:
+        while True:
             participants = await client(GetParticipantsRequest(
                 channel=source_chat_id,
                 filter=ChannelParticipantsRecent(),
@@ -155,29 +150,26 @@ async def scrape_members(client, source_chat_id, limit=None): # REMOVED: limit=c
                 break
             
             for user in participants.users:
-                if not user.bot and not user.is_self and user.status and \
-                   not isinstance(user.status, (type(None), functions.contacts.Blocked, functions.contacts.BlockedWait)):
+                if not user.bot and not user.is_self and user.status and not isinstance(user.status, (type(None), functions.contacts.Blocked, functions.contacts.BlockedWait)):
                     members.append(user)
-                    if len(members) >= actual_limit: # Use actual_limit here
+                    if len(members) >= actual_limit:
                         break
             
             offset += len(participants.users)
-            if len(members) >= actual_limit or not participants.users: # Use actual_limit here
+            if len(members) >= actual_limit or not participants.users:
                 break
             await asyncio.sleep(random.uniform(1, 3))
 
-        except FloodWaitError as e:
-            LOGGER.warning(f"Scraping FloodWait for {client.session.dc_id}: {e.seconds}s. Waiting...")
-            await asyncio.sleep(e.seconds + random.uniform(5, 10))
-        except Exception as e:
-            LOGGER.error(f"Error scraping members from {source_chat_id}: {e}")
-            break
+    except FloodWaitError as e:
+        LOGGER.warning(f"Scraping FloodWait for {client.session.dc_id}: {e.seconds}s. Waiting...")
+        await asyncio.sleep(e.seconds + random.uniform(5, 10))
+    except Exception as e:
+        LOGGER.error(f"Error scraping members from {source_chat_id}: {e}")
     
     LOGGER.info(f"Scraped {len(members)} members from {source_chat_id}")
     return members
 
 async def add_member_to_group(user_client, target_chat_id, member_user, task_id, account_id, owner_id):
-    # Use current_config_instance for limits
     try:
         await user_client(functions.channels.InviteToChannelRequest(
             channel=target_chat_id,
@@ -188,37 +180,41 @@ async def add_member_to_group(user_client, target_chat_id, member_user, task_id,
         db.update_user_account_in_owner_doc(owner_id, account_id,
             {"$inc": {"user_accounts.$.daily_adds_count": 1}, "$set": {"user_accounts.$.last_add_date": time.time()}}
         )
-        return True
+        return True, "Success"
     except UserAlreadyParticipantError:
         LOGGER.info(f"Account {account_id}: Member {member_user.id} already in {target_chat_id}. Skipping.")
+        return False, "AlreadyParticipant"
     except UserPrivacyRestrictedError:
         LOGGER.warning(f"Account {account_id}: Member {member_user.id} has privacy restrictions for adding. Skipping.")
         db.update_user_account_in_owner_doc(owner_id, account_id,
             {"$inc": {"user_accounts.$.soft_error_count": 1}}
         )
+        return False, "PrivacyRestricted"
     except PeerFloodError as e:
         LOGGER.error(f"Account {account_id}: PeerFloodError detected! Message: {e}. Suspending account.")
         db.update_user_account_in_owner_doc(owner_id, account_id,
             {"$set": {"user_accounts.$.is_banned_for_adding": True, "user_accounts.$.last_error_time": time.time(), "user_accounts.$.error_type": "PeerFlood"}}
         )
         await bot_client.send_message(owner_id, strings['PEER_FLOOD_DETECTED'].format(account_id=account_id), parse_mode='html')
+        return False, "PeerFlood"
     except FloodWaitError as e:
         LOGGER.warning(f"Account {account_id}: FloodWaitError for {e.seconds}s. Pausing adding for this account.")
         db.update_user_account_in_owner_doc(owner_id, account_id,
             {"$set": {"user_accounts.$.flood_wait_until": time.time() + e.seconds, "user_accounts.$.last_error_time": time.time(), "user_accounts.$.error_type": "FloodWait"}}
         )
         await asyncio.sleep(e.seconds + random.uniform(5, 10))
+        return False, "FloodWait"
     except (UserBlockedError, InputUserDeactivatedError):
         LOGGER.warning(f"Account {account_id}: Target user blocked or deactivated. Skipping.")
+        return False, "UserBlocked"
     except Exception as e:
         LOGGER.error(f"Account {account_id}: Failed to add {member_user.id} to {target_chat_id}: {e}")
         db.update_user_account_in_owner_doc(owner_id, account_id,
             {"$inc": {"user_accounts.$.soft_error_count": 1}}
         )
-    return False
+        return False, str(e)
 
 async def manage_adding_task(owner_id, task_id):
-    # Use current_config_instance for limits and delays
     LOGGER.info(f"Starting to manage adding task {task_id} for owner {owner_id}")
     
     owner_doc = db.get_user_data(owner_id)
@@ -230,38 +226,58 @@ async def manage_adding_task(owner_id, task_id):
         LOGGER.info(f"Task {task_id} is not active or not found. Stopping management.")
         return
 
-    source_chat_id = utils.get(task_info, 'source_chat_id')
-    target_chat_ids = utils.get(task_info, 'target_chat_ids', [])
+    source_chat_ids = utils.get(task_info, 'source_chat_ids', [])
+    target_chat_id = utils.get(task_info, 'target_chat_id')
     assigned_account_ids = utils.get(task_info, 'assigned_accounts', [])
 
-    if not source_chat_id or not target_chat_ids or not assigned_account_ids:
+    if not source_chat_ids or not target_chat_id or not assigned_account_ids:
         LOGGER.warning(f"Task {task_id} missing source, target, or assigned accounts. Pausing task.")
         db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
-        await bot_client.send_message(owner_id, strings['TASK_NO_SOURCE_SELECTED'] if not source_chat_id else (strings['TASK_NO_TARGET_SELECTED'] if not target_chat_ids else strings['TASK_NO_ACCOUNTS_ASSIGNED']), parse_mode='html')
+        await bot_client.send_message(owner_id, strings['TASK_NO_SOURCE_SELECTED'] if not source_chat_ids else (strings['TASK_NO_TARGET_SELECTED'] if not target_chat_id else strings['TASK_NO_ACCOUNTS_ASSIGNED']), parse_mode='html')
         return
 
-    members_to_add = []
-    scrape_client_info = None
+    active_clients_for_task = []
     for acc_id in assigned_account_ids:
-        acc_info = db.find_user_account_in_owner_doc(owner_id, acc_id)
-        if acc_info and utils.get(acc_info, 'logged_in') and \
-           not utils.get(acc_info, 'is_banned_for_adding') and \
-           utils.get(acc_info, 'flood_wait_until', 0) < time.time():
-            scrape_client = await get_user_client(acc_id)
-            if scrape_client:
-                scrape_client_info = (acc_id, scrape_client)
-                break
-    
-    if not scrape_client_info:
-        LOGGER.warning(f"No active accounts available for scraping for task {task_id}. Pausing task.")
+        client = await get_user_client(acc_id)
+        if client:
+            active_clients_for_task.append((acc_id, client))
+
+    if not active_clients_for_task:
+        LOGGER.warning(f"No active accounts could be connected for task {task_id}. Pausing.")
         db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
         await bot_client.send_message(owner_id, strings['NO_ACTIVE_ACCOUNTS_FOR_TASK'].format(task_id=task_id), parse_mode='html')
         return
 
+    all_chats_to_check = source_chat_ids + [target_chat_id]
+    for chat_to_check in all_chats_to_check:
+        access_verified = False
+        for acc_id, client in active_clients_for_task:
+            try:
+                await client.get_entity(chat_to_check)
+                access_verified = True
+                LOGGER.info(f"Access to chat {chat_to_check} verified with account {acc_id}.")
+                break
+            except Exception:
+                continue
+        
+        if not access_verified:
+            LOGGER.error(f"No assigned account for task {task_id} can access chat {chat_to_check}. Pausing task.")
+            db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
+            await bot_client.send_message(owner_id, f"Could not access chat `{chat_to_check}` with any assigned account for Task `{task_id}`. Pausing task.", parse_mode='Markdown')
+            return
+
+    scrape_acc_id, scrape_client = active_clients_for_task[0]
+    members_to_add = []
     try:
         await bot_client.send_message(owner_id, strings['SCRAPING_MEMBERS'])
-        # Pass the limit to scrape_members
-        members_to_add = await scrape_members(scrape_client_info[1], source_chat_id, limit=current_config_instance.MEMBER_SCRAPE_LIMIT)
+        all_members = {}
+        for source_chat in source_chat_ids:
+            scraped = await scrape_members(scrape_client, source_chat, limit=current_config_instance.MEMBER_SCRAPE_LIMIT)
+            for member in scraped:
+                if member.id not in all_members:
+                    all_members[member.id] = member
+        members_to_add = list(all_members.values())
+
         if not members_to_add:
             await bot_client.send_message(owner_id, "No members found to scrape or an error occurred during scraping. Pausing task.")
             db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
@@ -322,21 +338,18 @@ async def manage_adding_task(owner_id, task_id):
 
             member_to_add = members_to_add[current_member_index]
             
-            added_to_any_target = False
-            for target_chat_id in target_chat_ids:
-                success = await add_member_to_group(current_user_client, target_chat_id, member_to_add, task_id, account_id, owner_id)
-                if success:
-                    db.update_task_in_owner_doc(owner_id, task_id, {"$inc": {"adding_tasks.$.added_members_count": 1}})
-                    added_count_for_task += 1
-                    break
+            success, reason = await add_member_to_group(current_user_client, target_chat_id, member_to_add, task_id, account_id, owner_id)
+            
+            current_member_index += 1
+            db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.current_member_index": current_member_index}})
+
+            if success:
+                added_count_for_task += 1
+                db.update_task_in_owner_doc(owner_id, task_id, {"$inc": {"adding_tasks.$.added_members_count": 1}})
 
             if utils.get(account_data, 'daily_adds_count', 0) >= current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT or \
                utils.get(account_data, 'soft_error_count', 0) >= current_config_instance.SOFT_ADD_LIMIT_ERRORS:
                 await bot_client.send_message(owner_id, strings['ADDING_LIMIT_REACHED'].format(account_id=account_id, limit=current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT), parse_mode='html')
-
-            if added_to_any_target:
-                current_member_index += 1
-                db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.current_member_index": current_member_index}})
             
             progress_percent = (added_count_for_task / total_members_to_process) * 100
             
@@ -364,7 +377,7 @@ async def manage_adding_task(owner_id, task_id):
             await bot_client.send_message(owner_id, f"Adding task {task_id} cancelled.")
             break
         except Exception as e:
-            LOGGER.error(f"Unhandled error in adding task {task_id}: {e}")
+            LOGGER.error(f"Unhandled error in adding task {task_id}: {e}", exc_info=True)
             await bot_client.send_message(owner_id, f"An unexpected error occurred in Task {task_id}: {e}. Pausing task.", parse_mode='html')
             db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
             break
@@ -400,7 +413,7 @@ async def pause_adding_task(task_id):
     if task_id in ACTIVE_ADDING_TASKS:
         ACTIVE_ADDING_TASKS[task_id].cancel()
         del ACTIVE_ADDING_TASKS[task_id]
-        owner_doc = db.users_db.find_one({"adding_tasks.task_id": task_id}) # Find owner by task_id
+        owner_doc = db.users_db.find_one({"adding_tasks.task_id": task_id})
         if owner_doc:
             db.update_task_in_owner_doc(owner_doc['chat_id'], task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
         LOGGER.info(f"Adding task {task_id} paused.")
