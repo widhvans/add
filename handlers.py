@@ -13,7 +13,7 @@ from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
     UserNotParticipantError, MessageNotModifiedError, PhoneCodeExpiredError,
-    InviteHashExpiredError, InviteHashInvalidError
+    InviteHashExpiredError, InviteHashInvalidError, UserAlreadyParticipantError
 )
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
@@ -330,8 +330,10 @@ async def _handle_delete_member_account(e, uid, account_id):
 # --- Registration Function ---
 def register_all_handlers(bot_client_instance):
     """Registers all message and callback query handlers with the bot_client instance."""
-    global _bot_client_instance
-    _bot_client_instance = bot_client_instance
+    # BUG FIX: Propagate the main bot client instance to all modules that need it.
+    # This ensures that modules like `menus` have access to the client for operations
+    # like fetching chat titles, instead of having a `None` client.
+    set_bot_client_for_modules(bot_client_instance)
 
     # --- Command Handlers ---
     @_bot_client_instance.on(events.NewMessage(pattern=r"/start", func=lambda e: e.is_private))
