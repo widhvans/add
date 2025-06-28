@@ -31,9 +31,9 @@ strings = {
     # New strings for member adding accounts
     'ADD_ACCOUNT_NUMBER_PROMPT': "Please send the **phone number(s)** (with country code, e.g., `+919876543210`) of the account(s) you want to add for member management.\n\n"
                                  "You can send **multiple numbers, one per line**, to add accounts in bulk.",
-    'share_phone_number_button': "Share Phone Number", # Not used anymore
+    'share_phone_number_button': "Share Phone Number",
     'ADD_ANOTHER_ACCOUNT_PROMPT': "✅ Account login successful! Would you like to add another account for member management?",
-    'ASK_OTP_PROMPT': "Please enter the **OTP** (e.g., `123 45`) you received on that Telegram account. *The bot will automatically remove any spaces.*", # Updated OTP instruction
+    'ASK_OTP_PROMPT': "Please enter the **OTP** (e.g., `123 45`) you received on that Telegram account. *The bot will automatically remove any spaces.*",
     'ASK_PASSWORD_PROMPT': "Please enter the **2FA password** for that Telegram account.",
     'ACCOUNT_ALREADY_ADDED': "Account with phone number `{phone_number}` is already added.",
 
@@ -50,34 +50,34 @@ strings = {
     'ACCOUNT_STATUS_FLOODED': "⏳ **Flood Wait** (Until: {until_time})",
     'ACCOUNT_STATUS_INVALID': "❌ **Invalid Session**",
     'ACCOUNT_STATUS_INACTIVE': "⏸️ Inactive",
-    'NUMPAD_CONFIRM_BUTTON': "Confirm ✅", # Not used with direct input now
-    'BUTTON_ADD_ACCOUNT': "➕ Add Account", # CRITICAL FIX: Added missing string
-    'BUTTON_ADD_MORE_ACCOUNT': "➕ Add More Account", # CRITICAL FIX: Added missing string
+    'NUMPAD_CONFIRM_BUTTON': "Confirm ✅",
+    'BUTTON_ADD_ACCOUNT': "➕ Add Account",
+    'BUTTON_ADD_MORE_ACCOUNT': "➕ Add More Account",
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
     'CREATE_TASK_PROMPT': "To create a new adding task, please select a **source chat** by its ID or username.",
-    'ASK_SOURCE_CHAT_ID': "Please send the **ID or username** of the chat from which to scrape members (e.g., `-1001234567890` for a channel, or `some_channel_username`).\n\n"
-                          "You can send **multiple source chats (up to 5), one ID/username per line**.", # New instruction for source chat input
-    'ASK_TARGET_CHAT_ID': "Please send the **ID or username** of the **single target chat** where members will be added (e.g., `-1001234567890` for a group, or `some_group_username`).", # New instruction for target chat input
+    'ASK_SOURCE_CHAT_ID': "Please send the **ID, username, or invite link** of the chat from which to scrape members (e.g., `-1001234567890`, `my_channel`, or `t.me/joinchat/...`).\n\n"
+                          "You can send **multiple source chats (up to 5), one per line**.",
+    'ASK_TARGET_CHAT_ID': "Please send the **ID, username, or invite link** of the **single target chat** where members will be added.",
     'TOO_MANY_SOURCE_CHATS': "You can provide a maximum of 5 source chats.",
     'INVALID_CHAT_ID_FORMAT': "Invalid chat ID or username format: `{chat_input}`. Please ensure it's a number (for ID) or a valid username.",
-    'CHAT_NOT_FOUND_OR_ACCESSIBLE': "Chat `{chat_input}` not found or not accessible by bot owner.",
+    'CHAT_NOT_FOUND_OR_ACCESSIBLE': "Chat `{chat_input}` not found or not accessible by any of your logged-in accounts.",
     'TASK_SOURCE_SET': "✅ Source chat(s) for task {task_id} set.",
     'TASK_TARGET_SET': "✅ Target chat for task {task_id} set.",
     'TASK_NO_SOURCE_SELECTED': "Please set source chat(s) first.",
     'TASK_NO_TARGET_SELECTED': "Please set the target chat first.",
-    'TASK_NO_ACCOUNTS_ASSIGNED': "Please assign at least one active account to this task.",
+    'TASK_NO_ACCOUNTS_ASSIGNED': "Please add at least one active account to your bot first.",
     'TASK_CREATED_SUCCESS': "✅ Adding task created successfully!",
     'MANAGE_TASKS_HEADER': "⚙️ **Your Configured Adding Tasks**\n\n",
-    'TASK_ENTRY_INFO': "• Task {task_id} ({status})\n  Source: {source_chat_title}\n  Targets: {target_chat_titles}\n  Accounts: {num_accounts} assigned",
+    'TASK_ENTRY_INFO': "• Task {task_id} ({status})\n  Source: {source_chat_title}\n  Target: {target_chat_titles}\n  Accounts: {num_accounts} assigned",
     'TASK_STATUS_ACTIVE': "Active ▶️",
     'TASK_STATUS_PAUSED': "Paused ⏸️",
     'TASK_STATUS_DRAFT': "Draft 📝",
     'TASK_STATUS_COMPLETED': "Completed ✅",
 
-    'SELECT_SOURCE_CHAT': "Select the chat from which to scrape members for Task {task_id}:", # Original menu style, might be obsolete
-    'SELECT_TARGET_CHAT': "Select the chat(s) where members will be added for Task {task_id}:", # Original menu style, might be obsolete
-    'TASK_DETAILS_HEADER': "📝 **Task {task_id} Details**\n\nStatus: {status}\nSource: {source_chat_info}\nTargets: {target_chat_info}\nAssigned Accounts: {assigned_accounts_info}\nTotal Members Added: {total_added}",
+    'SELECT_SOURCE_CHAT': "Select the chat from which to scrape members for Task {task_id}:",
+    'SELECT_TARGET_CHAT': "Select the chat(s) where members will be added for Task {task_id}:",
+    'TASK_DETAILS_HEADER': "📝 **Task {task_id} Details**\n\nStatus: {status}\nSource(s):\n{source_chat_info}\n\nTarget:\n{target_chat_info}\n\nAssigned Accounts: {assigned_accounts_display}\nTotal Members Added: {total_added}",
     'TASK_STARTING': "Starting adding task {task_id}...",
     'TASK_PAUSING': "Pausing adding task {task_id}...",
     'TASK_STOPPING': "Stopping adding task {task_id}...",
@@ -87,8 +87,8 @@ strings = {
     'TASK_PROGRESS': "Running Task {task_id}: {added_count}/{total_members} added ({progress:.1f}%) using Account {account_id}.",
     'ADDING_LIMIT_REACHED': "Account `{account_id}` reached its daily adding limit ({limit} members) or encountered too many errors. Suspending for today.",
     'NO_ACTIVE_ACCOUNTS_FOR_TASK': "No active or available accounts to continue Task {task_id}. Pausing task.",
-    'SCRAPING_MEMBERS': "Scraping members from source chat...",
-    'SCRAPING_COMPLETE': "Scraping complete! Found {count} members.",
+    'SCRAPING_MEMBERS': "Scraping members from source chat(s)...",
+    'SCRAPING_COMPLETE': "Scraping complete! Found {count} unique members to process.",
     'ADD_SUCCESS': "Added {count} members to {target_chat_title} using account `{account_id}`.",
     'ADD_FAIL': "Failed to add member to {target_chat_title} using account `{account_id}`: {error_message}.",
     'MEMBER_ALREADY_IN_GROUP': "Member is already in the target group. Skipping.",
