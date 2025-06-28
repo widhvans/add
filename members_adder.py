@@ -14,9 +14,12 @@ from telethon.errors import (
     InputUserDeactivatedError,
     ChannelPrivateError,
     MessageNotModifiedError,
+    InviteHashInvalidError,
+    InviteHashExpiredError,
 )
 from telethon.tl.types import ChannelParticipantsRecent
 from telethon.tl.functions.channels import GetParticipantsRequest, JoinChannelRequest
+from telethon.tl.functions.messages import ImportChatInviteRequest # For joining via link
 
 import db
 import utils
@@ -37,59 +40,6 @@ def set_config_instance(cfg):
 
 ACTIVE_ADDING_TASKS = {}
 USER_CLIENTS = {}
-
-async def run_user_broadcast(uid, message_to_send):
-    status_msg = await bot_client.send_message(uid, strings['BROADCAST_STARTED'], parse_mode='html')
-    owner_data = db.get_user_data(uid)
-    
-    session_string = utils.get(owner_data, 'session')
-    if not session_string:
-        return await status_msg.edit(strings['session_invalid'], parse_mode='html')
-
-    u_client = TelegramClient(StringSession(session_string), current_config_instance.API_ID, current_config_instance.API_HASH, **current_config_instance.device_info)
-    sent_count, failed_count, total_count = 0, 0, 0
-    last_update_time = time.time()
-
-    try:
-        await u_client.connect()
-        dialogs = await u_client.get_dialogs()
-        targets = [d for d in dialogs if d.is_user and not d.entity.is_self and not d.entity.bot]
-        total_count = len(targets)
-        
-        for i, dialog in enumerate(targets):
-            try:
-                await u_client.send_message(dialog.id, message_to_send)
-                sent_count += 1
-                LOGGER.info(f"Broadcast message sent to {dialog.id} for user {uid}")
-            except PeerFloodError:
-                LOGGER.error(f"PeerFloodError for user {uid}. Stopping broadcast.")
-                await status_msg.edit(strings['BROADCAST_PEER_FLOOD'], parse_mode='html')
-                return
-            except Exception as e:
-                failed_count += 1
-                LOGGER.warning(f"Broadcast failed for {dialog.id} for user {uid}: {e}")
-            
-            current_time = time.time()
-            if current_time - last_update_time > 4:
-                try:
-                    await status_msg.edit(strings['BROADCAST_PROGRESS'].format(
-                        sent_count=sent_count, total_count=total_count, failed_count=failed_count
-                    ), parse_mode='html')
-                    last_update_time = current_time
-                except MessageNotModifiedError:
-                    pass
-
-            await asyncio.sleep(random.uniform(5, 10))
-
-    except Exception as e:
-        LOGGER.error(f"Critical error during user broadcast for {uid}: {e}")
-        await status_msg.edit(f"An error occurred during broadcast: {e}", parse_mode='html')
-    finally:
-        if u_client.is_connected():
-            await u_client.disconnect()
-        await status_msg.edit(strings['BROADCAST_COMPLETE'].format(
-            sent_count=sent_count, failed_count=failed_count
-        ), parse_mode='html')
 
 async def get_user_client(user_account_id):
     if user_account_id in USER_CLIENTS and USER_CLIENTS[user_account_id].is_connected():
@@ -219,10 +169,6 @@ async def add_member_to_group(user_client, target_chat_id, member_user, task_id,
 async def manage_adding_task(owner_id, task_id):
     LOGGER.info(f"Starting to manage adding task {task_id} for owner {owner_id}")
     
-    owner_doc = db.get_user_data(owner_id)
-    if not owner_doc:
-        LOGGER.error(f"Owner {owner_id} data not found for task {task_id}. Stopping task.")
-        return
     task_info = db.get_task_in_owner_doc(owner_id, task_id)
     if not task_info or not utils.get(task_info, 'is_active'):
         LOGGER.info(f"Task {task_id} is not active or not found. Stopping management.")
@@ -233,80 +179,70 @@ async def manage_adding_task(owner_id, task_id):
     assigned_account_ids = utils.get(task_info, 'assigned_accounts', [])
 
     if not source_chat_ids or not target_chat_id or not assigned_account_ids:
-        LOGGER.warning(f"Task {task_id} missing source, target, or assigned accounts. Pausing task.")
+        await bot_client.send_message(owner_id, "Task is not fully configured. Please set source, target, and ensure you have active accounts.")
         db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
-        await bot_client.send_message(owner_id, strings['TASK_NO_SOURCE_SELECTED'] if not source_chat_ids else (strings['TASK_NO_TARGET_SELECTED'] if not target_chat_id else strings['TASK_NO_ACCOUNTS_ASSIGNED']), parse_mode='html')
         return
 
-    active_clients_for_task = []
-    for acc_id in assigned_account_ids:
-        client = await get_user_client(acc_id)
-        if client:
-            active_clients_for_task.append((acc_id, client))
-
+    active_clients_for_task = [client for acc_id in assigned_account_ids if (client := await get_user_client(acc_id))]
     if not active_clients_for_task:
-        LOGGER.warning(f"No active accounts could be connected for task {task_id}. Pausing.")
-        db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
         await bot_client.send_message(owner_id, strings['NO_ACTIVE_ACCOUNTS_FOR_TASK'].format(task_id=task_id), parse_mode='html')
-        return
-
-    # --- BUG FIX: Improved chat validation ---
-    # First, validate all source chats
-    for source_chat in source_chat_ids:
-        access_verified = False
-        entity_type_is_valid = False
-        for acc_id, client in active_clients_for_task:
-            try:
-                entity = await client.get_entity(source_chat)
-                # You can only scrape from Channels (supergroups/channels) or Chats (small groups)
-                if isinstance(entity, (types.Channel, types.Chat)):
-                    access_verified = True
-                    entity_type_is_valid = True
-                    LOGGER.info(f"Access to source chat {source_chat} verified with account {acc_id}.")
-                    break  # This account works, no need to check other accounts for this source
-                else:
-                    # It's a User, which is invalid as a source.
-                    entity_type_is_valid = False
-            except Exception:
-                continue # This account failed, try the next one
-        
-        if not entity_type_is_valid:
-            error_message = (f"**Task {task_id} Paused!**\n\n"
-                             f"Source chat (`{source_chat}`) is a **private user chat**, not a group or channel. "
-                             "You can only scrape members from **groups and channels**.\n\n"
-                             "Please set a valid group or channel as the source.")
-            LOGGER.error(f"Invalid source type for task {task_id}: {source_chat} is a user.")
-            await bot_client.send_message(owner_id, error_message, parse_mode='Markdown')
-            db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
-            return
-            
-        if not access_verified:
-            error_message = f"**Task {task_id} Paused!**\n\nNone of your logged-in accounts can access the source chat: `{source_chat}`. Make sure at least one account is a member of this group/channel."
-            LOGGER.error(f"No account has access to source chat {source_chat} for task {task_id}.")
-            await bot_client.send_message(owner_id, error_message, parse_mode='Markdown')
-            db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
-            return
-
-    # Second, validate the target chat
-    target_access_verified = False
-    for acc_id, client in active_clients_for_task:
-        try:
-            await client.get_entity(target_chat_id)
-            target_access_verified = True
-            LOGGER.info(f"Access to target chat {target_chat_id} verified with account {acc_id}.")
-            break
-        except Exception:
-            continue
-            
-    if not target_access_verified:
-        error_message = f"**Task {task_id} Paused!**\n\nNone of your logged-in accounts can access the target chat: `{target_chat_id}`. Make sure at least one account is a member of this group/channel."
-        LOGGER.error(f"No account has access to target chat {target_chat_id} for task {task_id}.")
-        await bot_client.send_message(owner_id, error_message, parse_mode='Markdown')
         db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
         return
-    # --- End of validation ---
 
-    scrape_acc_id, scrape_client = active_clients_for_task[0]
+    # --- FEATURE: Auto-Join and Validate Chats ---
+    all_chats_to_setup = source_chat_ids + [target_chat_id]
+    for chat in all_chats_to_setup:
+        is_source = chat in source_chat_ids
+        setup_successful = False
+        
+        # Try to join/validate with at least one client
+        for client in active_clients_for_task:
+            me = await client.get_me()
+            try:
+                # Handle invite links
+                if isinstance(chat, str) and ('joinchat' in chat or '+' in chat):
+                    invite_hash = chat.split('/')[-1].replace('+', '')
+                    try:
+                        await client(ImportChatInviteRequest(invite_hash))
+                        LOGGER.info(f"Account {me.id} successfully joined {chat}")
+                    except UserAlreadyParticipantError:
+                        pass # Already a member, which is fine
+                
+                # Get entity to validate type and access
+                entity = await client.get_entity(chat)
+
+                # If it's a source chat, it must be a group or channel
+                if is_source and not isinstance(entity, (types.Channel, types.Chat)):
+                    error_msg = f"**Task {task_id} Paused!**\n\nSource chat (`{chat}`) is a **private user chat**. You can only scrape members from **groups or channels**."
+                    LOGGER.error(f"Invalid source type for task {task_id}: {chat} is a user.")
+                    await bot_client.send_message(owner_id, error_msg, parse_mode='Markdown')
+                    db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
+                    return
+
+                # Ensure membership for public groups/channels
+                if isinstance(entity, (types.Channel, types.Chat)):
+                    try:
+                        await client(JoinChannelRequest(entity))
+                    except UserAlreadyParticipantError:
+                        pass # Good, already a member
+                
+                setup_successful = True
+                LOGGER.info(f"Account {me.id} confirmed access to chat {chat}")
+                break # One client is enough to confirm access and join
+
+            except (InviteHashInvalidError, InviteHashExpiredError, ValueError, TypeError) as e:
+                LOGGER.warning(f"Account {me.id} failed to process chat {chat}: {e}")
+                continue # Try the next account
+        
+        if not setup_successful:
+            error_msg = f"**Task {task_id} Paused!**\n\nNone of your accounts could join or access the chat: `{chat}`. Please ensure the link/ID is correct and your accounts are not banned from it."
+            LOGGER.error(f"All accounts failed to setup chat {chat} for task {task_id}")
+            await bot_client.send_message(owner_id, error_msg, parse_mode='Markdown')
+            db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
+            return
+    # --- End of Auto-Join and Validation ---
+
+    scrape_client = active_clients_for_task[0]
     members_to_add = []
     try:
         await bot_client.send_message(owner_id, strings['SCRAPING_MEMBERS'])
@@ -319,7 +255,7 @@ async def manage_adding_task(owner_id, task_id):
         members_to_add = list(all_members.values())
 
         if not members_to_add:
-            await bot_client.send_message(owner_id, "No members found to scrape or an error occurred during scraping. Pausing task.")
+            await bot_client.send_message(owner_id, "No new members found to scrape. Pausing task.")
             db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}})
             return
         await bot_client.send_message(owner_id, strings['SCRAPING_COMPLETE'].format(count=len(members_to_add)))
@@ -353,7 +289,6 @@ async def manage_adding_task(owner_id, task_id):
                 if acc_info and acc_info.get('logged_in') and not acc_info.get('is_banned_for_adding') and (acc_info.get('flood_wait_until') or 0) < time.time():
                     
                     today_start_ts = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-                    
                     last_add_timestamp = acc_info.get('last_add_date') or 0
                     if last_add_timestamp < today_start_ts:
                         db.update_user_account_in_owner_doc(owner_id, acc_id, {"daily_adds_count": 0, "soft_error_count": 0})
@@ -425,20 +360,6 @@ async def start_adding_task(owner_id, task_id):
         LOGGER.warning(f"Task {task_id} is already running.")
         return False
     
-    task_info = db.get_task_in_owner_doc(owner_id, task_id)
-    if not task_info: return False
-
-    assigned_account_ids = utils.get(task_info, 'assigned_accounts', [])
-    if not assigned_account_ids:
-        await bot_client.send_message(owner_id, strings['TASK_NO_ACCOUNTS_ASSIGNED'], parse_mode='html')
-        return False
-
-    for acc_id in assigned_account_ids:
-        client = await get_user_client(acc_id)
-        if not client:
-            await bot_client.send_message(owner_id, f"Account <code>{acc_id}</code> could not be connected. Task {task_id} cannot start.", parse_mode='html')
-            return False
-        
     task = asyncio.create_task(manage_adding_task(owner_id, task_id))
     ACTIVE_ADDING_TASKS[task_id] = task
     db.update_task_in_owner_doc(owner_id, task_id, {"$set": {"adding_tasks.$.is_active": True, "adding_tasks.$.status": "active"}})
@@ -456,24 +377,12 @@ async def pause_adding_task(task_id):
         return True
     return False
 
-async def stop_user_adding_clients(owner_id):
-    owner_data = db.get_user_data(owner_id)
-    if owner_data:
-        for account in utils.get(owner_data, 'user_accounts', []):
-            acc_id = utils.get(account, 'account_id')
-            if acc_id and acc_id in USER_CLIENTS:
-                client = USER_CLIENTS.pop(acc_id)
-                if client.is_connected():
-                    await client.disconnect()
-                LOGGER.info(f"Disconnected user client {acc_id} for owner {owner_id}.")
-
 async def get_chat_title(client, chat_id):
     """
     More robustly gets a chat title. Handles cases where the entity is not in cache.
     """
     try:
         entity = await client.get_entity(chat_id)
-        # Return title for chats/channels, or username/full_name for users
         if hasattr(entity, 'title'):
             return entity.title
         else:
@@ -484,7 +393,6 @@ async def get_chat_title(client, chat_id):
                 name += entity.last_name
             return name.strip() or f"User ID: {entity.id}"
     except (ValueError, TypeError) as e:
-        # This specifically catches "Could not find the input entity" errors
         LOGGER.warning(f"Could not resolve entity for chat_id {chat_id}: {e}")
         return f"ID: `{chat_id}` (Unresolved)"
     except Exception as e:
