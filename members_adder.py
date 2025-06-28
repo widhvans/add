@@ -1,4 +1,3 @@
-
 import asyncio
 import random
 import time
@@ -151,8 +150,6 @@ async def scrape_members(client, source_chat_id, limit=None):
                 break
             
             for user in participants.users:
-                # BUG FIX: Corrected the filtering logic to be robust and avoid crashes.
-                # We filter out bots, deleted accounts, and the scraper's own account.
                 if not user.bot and not user.deleted and not user.is_self:
                     members.append(user)
                     if len(members) >= actual_limit:
@@ -313,13 +310,15 @@ async def manage_adding_task(owner_id, task_id):
                 break
 
             available_accounts = []
-            owner_doc_for_accounts = db.get_user_data(owner_id) # Re-fetch to get latest account status
             for acc_id in assigned_account_ids:
-                acc_info = db.find_user_account_in_owner_doc(owner_id, acc_id) # This is better
-                if acc_info and acc_info.get('logged_in') and not acc_info.get('is_banned_for_adding') and acc_info.get('flood_wait_until', 0) < time.time():
+                acc_info = db.find_user_account_in_owner_doc(owner_id, acc_id)
+                if acc_info and acc_info.get('logged_in') and not acc_info.get('is_banned_for_adding') and (acc_info.get('flood_wait_until') or 0) < time.time():
                     
                     today_start_ts = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-                    if acc_info.get('last_add_date', 0) < today_start_ts:
+                    
+                    # BUG FIX: Handle case where last_add_date is None for new accounts
+                    last_add_timestamp = acc_info.get('last_add_date') or 0
+                    if last_add_timestamp < today_start_ts:
                         db.update_user_account_in_owner_doc(owner_id, acc_id, {"daily_adds_count": 0, "soft_error_count": 0})
                         acc_info['daily_adds_count'] = 0
                         acc_info['soft_error_count'] = 0
@@ -374,7 +373,7 @@ async def manage_adding_task(owner_id, task_id):
 
         except asyncio.CancelledError:
             LOGGER.info(f"Adding task {task_id} cancelled by owner.")
-            await bot_client.send_message(owner_id, f"Adding task {task_id} cancelled.")
+            await bot_client.send_message(owner_id, f"Adding task {task_id} has been cancelled.")
             break
         except Exception as e:
             LOGGER.error(f"Unhandled error in adding task {task_id}: {e}", exc_info=True)
