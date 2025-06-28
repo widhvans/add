@@ -247,7 +247,6 @@ async def send_manage_adding_tasks_menu(e, uid):
         except Exception:
             return await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
-    # FIX: Remove the detailed task list from the message text as requested.
     text = strings['MANAGE_TASKS_HEADER']
     buttons = []
     
@@ -256,8 +255,6 @@ async def send_manage_adding_tasks_menu(e, uid):
         status = utils.get(task, 'status', 'draft')
         status_text = strings.get(f'TASK_STATUS_{status.upper()}', status.capitalize())
         
-        # The summary text is no longer added to the message body.
-        # It is now just a list of buttons.
         buttons.append([Button.inline(f"Task {task_id} - {status_text}", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')])
 
     buttons.append([Button.inline("« Back", data='{"action":"members_adding_menu"}')])
@@ -312,27 +309,30 @@ async def send_adding_task_details_menu(e, uid, task_id):
         total_added=total_added_members
     )
     
-    # FIX: Use clean JSON for callbacks
-    buttons = [
-        [
-            Button.inline("➕ Add Source Chat", data=json.dumps({"action": "m_add_addsource", "task_id": task_id})),
-            Button.inline("🗑️ Clear Sources", data=json.dumps({"action": "m_add_clearsource", "task_id": task_id}))
-        ],
-        [Button.inline("📥 Set/Change Target", data=json.dumps({"action": "m_add_settarget", "task_id": task_id}))]
-    ]
+    # --- FEATURE: Updated Buttons ---
+    buttons = []
     
-    action_buttons = []
-    task_status = utils.get(task, 'status')
-    if task_status == 'active':
-        action_buttons.append(Button.inline("⏸️ Pause Task", data=json.dumps({"action":"pause_adding_task", "task_id":task_id})))
-    else: 
-        if utils.get(task, 'source_chat_ids') and utils.get(task, 'target_chat_id') and utils.get(task, 'assigned_accounts'):
-            action_buttons.append(Button.inline("▶️ Start Task", data=json.dumps({"action":"start_adding_task", "task_id":task_id})))
+    # Row 1: Start and Pause buttons
+    # Only show if the task is configured
+    if utils.get(task, 'source_chat_ids') and utils.get(task, 'target_chat_id'):
+        buttons.append([
+            Button.inline("▶️ Start", data=json.dumps({"action": "start_adding_task", "task_id": task_id})),
+            Button.inline("⏸️ Pause", data=json.dumps({"action": "pause_adding_task", "task_id": task_id}))
+        ])
 
-    if action_buttons:
-        buttons.append(action_buttons)
-    
-    buttons.append([Button.inline("🗑️ Delete Task", data=json.dumps({"action":"confirm_delete_adding_task", "task_id":task_id}))])
+    # Row 2: Chat configuration buttons
+    buttons.append([
+        Button.inline("➕ Add Source", data=json.dumps({"action": "m_add_addsource", "task_id": task_id})),
+        Button.inline("📥 Set Target", data=json.dumps({"action": "m_add_settarget", "task_id": task_id}))
+    ])
+
+    # Row 3: Reset and Delete buttons
+    buttons.append([
+        Button.inline("🔄 Reset Chats", data=json.dumps({"action": "m_add_resetchats", "task_id": task_id})),
+        Button.inline("🗑️ Delete Task", data=json.dumps({"action":"confirm_delete_adding_task", "task_id":task_id}))
+    ])
+
+    # Final Row: Back button
     buttons.append([Button.inline("« Back", data='{"action":"manage_adding_tasks"}')])
     
     try:
