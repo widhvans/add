@@ -590,7 +590,6 @@ def register_all_handlers(bot_client_instance):
         raw_data = e.data.decode()
         owner_data = db.get_user_data(uid)
 
-        # BUG FIX: Robust callback handling. Try JSON first, then simple strings.
         try:
             # Handle JSON-based callbacks
             j = json.loads(raw_data)
@@ -602,33 +601,25 @@ def register_all_handlers(bot_client_instance):
             if not owner_data and action not in ["main_menu", "help", "commands", "retry_fsub"]:
                 return await e.answer("User data not found. Please /start again.", alert=True)
             
-            # --- All JSON actions are handled below ---
-
+            # --- FEATURE & FIX: New/Updated JSON actions ---
             if action == "m_add_addsource":
                 task_id = j.get('task_id')
-                prompt_key = 'ASK_ADD_SOURCE_CHAT_ID'
                 db.update_user_data(uid, {"$set": {"state": f"awaiting_add_source_chat_{task_id}"}})
-                await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')]], parse_mode='Markdown')
-
-            elif action == "m_add_clearsource":
-                task_id = j.get('task_id')
-                db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.source_chat_ids": []}})
-                await e.answer("Source chats cleared successfully!", alert=True)
-                await menus.send_adding_task_details_menu(e, uid, task_id)
-
+                await e.edit(strings['ASK_ADD_SOURCE_CHAT_ID'], buttons=[[Button.inline("« Back", json.dumps({"action":"m_add_task_menu","task_id":task_id}))]], parse_mode='Markdown')
+            
             elif action == "m_add_settarget":
                 task_id = j.get('task_id')
-                prompt_key = 'ASK_TARGET_CHAT_ID'
                 db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_target_{task_id}"}})
-                await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')]], parse_mode='Markdown')
-            
-            elif action == "ban_dl":
-                if e.sender_id != config.OWNER_ID:
-                    return await e.answer("You are not authorized to do this.", alert=True)
-                user_id_to_ban = j.get('user_id')
-                db.users_db.update_one({"chat_id": user_id_to_ban}, {"$set": {"is_banned_from_dl": True}}, upsert=True)
-                await e.edit("✅ User has been **banned**.")
-            
+                await e.edit(strings['ASK_TARGET_CHAT_ID'], buttons=[[Button.inline("« Back", json.dumps({"action":"m_add_task_menu","task_id":task_id}))]], parse_mode='Markdown')
+
+            elif action == "m_add_resetchats":
+                task_id = j.get('task_id')
+                update_query = {"$set": {"adding_tasks.$.source_chat_ids": [], "adding_tasks.$.target_chat_id": None}}
+                db.update_task_in_owner_doc(uid, task_id, update_query)
+                await e.answer("Source and Target chats have been cleared!", alert=True)
+                await menus.send_adding_task_details_menu(e, uid, task_id)
+
+            # --- Other existing JSON actions ---
             elif action == "main_menu": await menus.send_main_menu(e)
             elif action == "help": await menus.send_help_menu(e)
             elif action == "commands": await menus.send_commands_menu(e)
@@ -638,60 +629,53 @@ def register_all_handlers(bot_client_instance):
             elif action == "manage_member_accounts": await menus.display_member_accounts(e, uid)
             elif action == "create_adding_task": await menus.send_create_adding_task_menu(e, uid)
             elif action == "manage_adding_tasks": await menus.send_manage_adding_tasks_menu(e, uid)
-            elif action == "user_broadcast":
-                db.update_user_data(uid, {"$set": {"state": "awaiting_broadcast_message"}})
-                await e.edit(strings['BROADCAST_MENU_TEXT'], buttons=[[Button.inline("🛑 Cancel Broadcast", '{"action":"cancel_broadcast"}')]], parse_mode='html')
-            elif action == "cancel_broadcast":
-                db.update_user_data(uid, {"$set": {"state": None}})
-                await e.edit(strings['BROADCAST_CANCELLED'], buttons=[[Button.inline("« Back to Settings", '{"action":"settings"}')]], parse_mode='html')
             
             elif action == "member_account_details":
                 await menus.send_member_account_details(e, uid, j.get('account_id'))
             elif action == "confirm_delete_member_account":
-                await e.edit(f"Are you sure you want to delete account <code>{j.get('account_id')}</code>?", buttons=menus.yesno(f"delete_member_account_{j.get('account_id')}"), parse_mode='html')
-            elif action == "relogin_member_account":
-                db.update_user_data(uid, {"$set": {"state": f"awaiting_member_account_relogin_phone_{j.get('account_id')}"}})
-                await e.edit(strings['ADD_ACCOUNT_NUMBER_PROMPT'], parse_mode='Markdown')
-            elif action == "toggle_member_account_ban":
                 account_id = j.get('account_id')
-                account_info = db.find_user_account_in_owner_doc(uid, account_id)
-                if account_info:
-                    new_ban_status = not utils.get(account_info, 'is_banned_for_adding', False)
-                    db.update_user_account_in_owner_doc(uid, account_id, {"is_banned_for_adding": new_ban_status})
-                    await e.answer(f"Account ban status set to {new_ban_status}.", alert=True)
-                    await menus.send_member_account_details(e, uid, account_id)
+                await e.edit(f"Are you sure you want to delete account <code>{account_id}</code>?", buttons=menus.yesno(f"delete_member_account_{account_id}"), parse_mode='html')
             
             elif action == "m_add_task_menu":
                 await menus.send_adding_task_details_menu(e, uid, j.get('task_id'))
+            
             elif action == "start_adding_task":
                 task_id = j.get('task_id')
+                task_info = db.get_task_in_owner_doc(uid, task_id)
+                if not utils.get(task_info, 'source_chat_ids') or not utils.get(task_info, 'target_chat_id'):
+                    return await e.answer("Please set Source and Target chats first!", alert=True)
                 if await members_adder.start_adding_task(uid, task_id):
                     await e.answer(strings['TASK_STARTING'].format(task_id=task_id), alert=True)
                     await menus.send_adding_task_details_menu(e, uid, task_id)
                 else:
-                    await e.answer("Failed to start task. Ensure it's fully configured.", alert=True)
+                    await e.answer("Task is already running or failed to start.", alert=True)
+
             elif action == "pause_adding_task":
                 task_id = j.get('task_id')
                 if await members_adder.pause_adding_task(task_id):
                     await e.answer(strings['TASK_PAUSING'].format(task_id=task_id), alert=True)
                     await menus.send_adding_task_details_menu(e, uid, task_id)
+                else:
+                    await e.answer("Task is not currently running.", alert=True)
+
             elif action == "confirm_delete_adding_task":
                 task_id = j.get('task_id')
                 await e.edit(strings['TASK_DELETE_CONFIRM'].format(task_id=task_id), buttons=menus.yesno(f"delete_adding_task_{task_id}"), parse_mode='html')
             
-            elif action == "noop": return await e.answer()
-            else: return await e.answer("Action not implemented yet.")
+            # Other actions can be added here...
+            
+            # Default answer for buttons that just update the menu
+            else:
+                await e.answer()
 
         except json.JSONDecodeError:
             # Handle simple string-based callbacks (legacy, e.g., yesno)
             action = raw_data
 
             if action.startswith("yes_add_another_account_"):
-                db.update_user_data(uid, {"$set": {"state": None}})
-                await e.answer("Initiating another account addition...", alert=True)
+                await e.answer("Initiating...", alert=True)
                 await handle_add_member_account_flow(e)
             elif action.startswith("no_add_another_account_"):
-                db.update_user_data(uid, {"$set": {"state": None}})
                 await e.edit("Okay, no more accounts for now.", buttons=None)
                 await menus.send_members_adding_menu(e, uid)
             elif action.startswith("yes_delete_member_account_"):
@@ -702,7 +686,7 @@ def register_all_handlers(bot_client_instance):
                 await menus.send_member_account_details(e, uid, account_id)
             elif action.startswith("yes_delete_adding_task_"):
                 task_id = int(action.split('_')[-1])
-                await members_adder.pause_adding_task(task_id) # Ensure it's stopped first
+                await members_adder.pause_adding_task(task_id)
                 db.update_user_data(uid, {"$pull": {"adding_tasks": {"task_id": task_id}}})
                 await e.edit(strings['TASK_DELETED'].format(task_id=task_id), buttons=[[Button.inline("« Back", '{"action":"manage_adding_tasks"}')]], parse_mode='html')
             elif action.startswith("no_delete_adding_task_"):
