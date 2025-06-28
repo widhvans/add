@@ -43,7 +43,7 @@ async def main():
         
         # --- CRITICAL FIX: Pass the bot instance to handlers and menus modules ---
         handlers.set_bot_client_for_modules(bot)
-        menus.set_bot_client(bot) # <-- THIS LINE WAS MISSING AND IS NOW ADDED
+        menus.set_bot_client(bot)
         LOGGER.info("All event handlers registered successfully.")
         
         # Pass the config instance to members_adder module (no direct import there)
@@ -55,7 +55,9 @@ async def main():
         all_owners = db.users_db.find({})
         member_account_count = 0
         active_adding_tasks_count = 0
-        async for owner_doc in all_owners: # Use async for cursor iteration
+        
+        # --- THIS IS THE CORRECTED LINE ---
+        for owner_doc in all_owners: # Use a standard 'for' loop for the synchronous pymongo cursor
             owner_id = owner_doc.get('chat_id')
             # Connect all user clients for adding
             for acc in owner_doc.get('user_accounts', []):
