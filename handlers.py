@@ -13,7 +13,7 @@ from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
     UserNotParticipantError, MessageNotModifiedError, PhoneCodeExpiredError,
-    InviteHashExpiredError, InviteHashInvalidError, UserAlreadyParticipantError
+    InviteHashExpiredError, InviteHashInvalidError, UserAlreadyParticipantError # BUG FIX: Added missing error import
 )
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
@@ -54,6 +54,7 @@ async def _resolve_chat_entity(owner_id, chat_input):
         return None, "Owner data not found."
 
     clients_to_try = []
+    # Prioritize user accounts as they can join private chats
     user_accounts = owner_data.get('user_accounts', [])
     for acc in user_accounts:
         if acc.get('logged_in') and acc.get('session_string'):
@@ -61,27 +62,34 @@ async def _resolve_chat_entity(owner_id, chat_input):
             if client:
                 clients_to_try.append(client)
     
+    # Fallback to the bot's own client
     clients_to_try.append(_bot_client_instance)
 
     for i, client in enumerate(clients_to_try):
-        is_user_client = (i < len(clients_to_try) - 1)
+        is_user_client = client != _bot_client_instance
         client_name = f"User Account Client {i+1}" if is_user_client else "Bot Client"
         
         try:
+            # Handle private invite links (t.me/joinchat/... or t.me/+)
             if 'joinchat' in chat_input or '+' in chat_input:
                 invite_hash = chat_input.split('/')[-1].replace('+', '')
+                # Only user accounts can accept invites, not bots
                 if is_user_client:
                     try:
                         updates = await client(ImportChatInviteRequest(invite_hash))
                         return updates.chats[0], None
                     except UserAlreadyParticipantError:
+                        # If already in the chat, just get the entity
                         return await client.get_entity(chat_input), None
                     except (InviteHashExpiredError, InviteHashInvalidError):
-                        LOGGER.warning(f"Invite link '{chat_input}' is invalid or expired. Trying next client.")
+                        LOGGER.warning(f"Invite link '{chat_input}' is invalid or expired when using {client_name}. Trying next client.")
                         continue
                 else:
-                    return await client.get_entity(chat_input), None
+                    # Bots can't join private chats via invite links this way. Skip.
+                    LOGGER.warning(f"Bot Client cannot process invite link '{chat_input}'. Skipping.")
+                    continue
 
+            # Handle public chats/channels or IDs
             entity = await client.get_entity(chat_input)
             return entity, None
         except Exception as ex:
@@ -330,9 +338,7 @@ async def _handle_delete_member_account(e, uid, account_id):
 # --- Registration Function ---
 def register_all_handlers(bot_client_instance):
     """Registers all message and callback query handlers with the bot_client instance."""
-    # BUG FIX: Propagate the main bot client instance to all modules that need it.
-    # This ensures that modules like `menus` have access to the client for operations
-    # like fetching chat titles, instead of having a `None` client.
+    # This function will set the client instance for handlers, menus, and members_adder modules.
     set_bot_client_for_modules(bot_client_instance)
 
     # --- Command Handlers ---
@@ -472,16 +478,21 @@ def register_all_handlers(bot_client_instance):
             account_id = int(state.split('_')[-1])
             await _handle_member_account_login_step(e, uid, account_id, e.text)
         
-        elif state and state.startswith("awaiting_chat_input_source_"):
+        # FEATURE: Handle adding new source chats
+        elif state and state.startswith("awaiting_add_source_chat_"):
             task_id = int(state.split('_')[-1])
             chat_inputs_raw = e.text.strip().split('\n')
-            source_chat_ids = []
             
-            if len(chat_inputs_raw) > 5:
-                return await e.respond(strings['TOO_MANY_SOURCE_CHATS'], parse_mode='Markdown')
+            task = db.get_task_in_owner_doc(uid, task_id)
+            if not task:
+                db.update_user_data(uid, {"$unset": {"state": 1}})
+                return await e.respond("Task not found. It might have been deleted.")
 
-            processing_msg = await e.respond("Validating source chat(s)... Please wait.", parse_mode='Markdown')
-
+            source_chat_ids = task.get('source_chat_ids', [])
+            
+            processing_msg = await e.respond("Validating and adding source chat(s)... Please wait.", parse_mode='Markdown')
+            
+            added_count = 0
             for chat_input_raw in chat_inputs_raw:
                 chat_input = chat_input_raw.strip()
                 if not chat_input: continue
@@ -489,22 +500,27 @@ def register_all_handlers(bot_client_instance):
                 entity, error_msg = await _resolve_chat_entity(uid, chat_input)
                 
                 if entity:
-                    source_chat_ids.append(entity.id)
+                    if entity.id not in source_chat_ids:
+                        source_chat_ids.append(entity.id)
+                        added_count += 1
                 else:
-                    await processing_msg.delete()
-                    await e.respond(error_msg, parse_mode='Markdown')
-                    return
+                    await processing_msg.edit(error_msg, parse_mode='Markdown')
+                    # Don't return, just report the error for this specific chat
+                    await e.respond(f"Failed to add '{chat_input}'. Please check the ID/link and try again.")
 
-            if source_chat_ids:
+            # Trim the list to the latest 5 if it exceeds the limit
+            if len(source_chat_ids) > 5:
+                source_chat_ids = source_chat_ids[-5:]
+            
+            if added_count > 0:
                 db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.source_chat_ids": source_chat_ids}})
-                db.update_user_data(uid, {"$unset": {"state": 1}})
-                await processing_msg.delete()
-                await e.respond(strings['TASK_SOURCE_SET'].format(task_id=task_id), parse_mode='Markdown')
-                await menus.send_adding_task_details_menu(e, uid, task_id)
-            else:
-                await processing_msg.delete()
-                await e.respond(strings['INVALID_CHAT_ID_FORMAT'].format(chat_input="Provided input"), parse_mode='Markdown')
+            
+            db.update_user_data(uid, {"$unset": {"state": 1}})
+            await processing_msg.delete()
+            await e.respond(f"Added {added_count} new source chat(s) to Task {task_id}.", parse_mode='Markdown')
+            await menus.send_adding_task_details_menu(e, uid, task_id)
 
+        # FEATURE: Handle setting/replacing the target chat
         elif state and state.startswith("awaiting_chat_input_target_"):
             task_id = int(state.split('_')[-1])
             chat_input = e.text.strip()
@@ -588,25 +604,6 @@ def register_all_handlers(bot_client_instance):
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
 
-        if raw_data.startswith("m_add_set|"):
-            try:
-                _, selection_type, task_id_str = raw_data.split("|")
-                task_id = int(task_id_str)
-                
-                prompt_key = ""
-                if selection_type == 'from':
-                    prompt_key = 'ASK_SOURCE_CHAT_ID'
-                    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_source_{task_id}"}})
-                elif selection_type == 'to':
-                    prompt_key = 'ASK_TARGET_CHAT_ID'
-                    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_target_{task_id}"}})
-                
-                await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
-            except Exception as ex:
-                LOGGER.error(f"Error processing callback 'm_add_set': {ex}", exc_info=True)
-                await e.answer("An error occurred. Please try again.", alert=True)
-            return
-
         if raw_data == 'noop' or raw_data == '{"action":"noop"}':
             return await e.answer()
 
@@ -616,6 +613,34 @@ def register_all_handlers(bot_client_instance):
         except (json.JSONDecodeError, AttributeError):
             j = {}
             action = None
+        
+        # New callback logic for source/target chat management
+        if isinstance(action, str) and action.startswith("m_add_"):
+            try:
+                parts = action.split('_')
+                action_type = parts[1]
+                task_id = int(parts[2])
+
+                if action_type == 'addsource':
+                    prompt_key = 'ASK_ADD_SOURCE_CHAT_ID'
+                    db.update_user_data(uid, {"$set": {"state": f"awaiting_add_source_chat_{task_id}"}})
+                    await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')]], parse_mode='Markdown')
+                
+                elif action_type == 'clearsource':
+                    db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.source_chat_ids": []}})
+                    await e.answer("Source chats cleared successfully!", alert=True)
+                    await menus.send_adding_task_details_menu(e, uid, task_id)
+
+                elif action_type == 'settarget':
+                    prompt_key = 'ASK_TARGET_CHAT_ID'
+                    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_target_{task_id}"}})
+                    await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu","task_id":{task_id}}}')]], parse_mode='Markdown')
+                
+            except Exception as ex:
+                LOGGER.error(f"Error processing callback '{action}': {ex}", exc_info=True)
+                await e.answer("An error occurred. Please try again.", alert=True)
+            return
+
 
         if action:
             if not owner_data and action not in ["main_menu", "help", "commands", "retry_fsub", "show_tutorial", "ban_dl"]:
@@ -768,4 +793,5 @@ def register_all_handlers(bot_client_instance):
             await e.answer("Please send the OTP directly as a message.")
 
         except (json.JSONDecodeError, KeyError):
-            await e.answer("An unknown error occurred.")
+            # This is likely an old button with a simple string format, ignore it silently.
+            await e.answer("An unknown error occurred or the button is outdated.")
