@@ -77,7 +77,16 @@ strings = {
 
     'SELECT_SOURCE_CHAT': "Select the chat from which to scrape members for Task {task_id}:", # Original menu style, might be obsolete
     'SELECT_TARGET_CHAT': "Select the chat(s) where members will be added for Task {task_id}:", # Original menu style, might be obsolete
-    'TASK_DETAILS_HEADER': "📝 **Task {task_id} Details**\n\nStatus: {status}\nSource: {source_chat_info}\nTargets: {target_chat_info}\nAssigned Accounts: {assigned_accounts_info}\nTotal Members Added: {total_added}",
+    
+    # --- FIX: Improved interface text ---
+    'TASK_DETAILS_HEADER': "⚙️ **Task #{task_id} Configuration**\n\n"
+                           "**Status:** {status}\n"
+                           "**Total Added:** {total_added} members\n\n"
+                           "**Source Chat(s):**\n{source_chat_info}\n\n"
+                           "**Target Chat:**\n{target_chat_info}\n\n"
+                           "**Assigned Accounts:**\n{assigned_accounts_info}",
+    # --- END FIX ---
+
     'TASK_STARTING': "Starting adding task {task_id}...",
     'TASK_PAUSING': "Pausing adding task {task_id}...",
     'TASK_STOPPING': "Stopping adding task {task_id}...",
