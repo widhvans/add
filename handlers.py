@@ -14,7 +14,7 @@ from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
     UserNotParticipantError, MessageNotModifiedError, PhoneCodeExpiredError,
-    ChannelPrivateError, UserAlreadyParticipantError, ValueError as TelethonValueError
+    ChannelPrivateError, UserAlreadyParticipantError
 )
 
 from config import config
@@ -233,23 +233,27 @@ def register_all_handlers(bot_client_instance):
             db.users_db.insert_one({"chat_id": s.id, "fn": s.first_name, "un": s.username, "start_time": datetime.datetime.now(datetime.timezone.utc), "user_accounts": [], "adding_tasks": []})
         await menus.send_main_menu(e)
 
-    # Command handlers: /help, /commands, /settings, etc.
     @_bot_client_instance.on(events.NewMessage(pattern=r"/help", func=lambda e: e.is_private))
     async def help_command_handler(e): await menus.send_help_menu(e)
+    
     @_bot_client_instance.on(events.NewMessage(pattern=r"/commands", func=lambda e: e.is_private))
     async def commands_command_handler(e): await menus.send_commands_menu(e)
+
     @_bot_client_instance.on(events.NewMessage(pattern=r"/settings", func=lambda e: e.is_private))
     async def settings_command_handler(e): await menus.send_settings_menu(e)
+    
     @_bot_client_instance.on(events.NewMessage(pattern=r"/addaccount", func=lambda e: e.is_private))
     async def add_member_account_command_handler(e): await handle_add_member_account_flow(e)
+    
     @_bot_client_instance.on(events.NewMessage(pattern=r"/myaccounts", func=lambda e: e.is_private))
     async def my_member_accounts_command_handler(e): await menus.display_member_accounts(e, e.sender_id)
+    
     @_bot_client_instance.on(events.NewMessage(pattern=r"/createtask", func=lambda e: e.is_private))
     async def create_adding_task_command_handler(e): await menus.send_create_adding_task_menu(e, e.sender_id)
+    
     @_bot_client_instance.on(events.NewMessage(pattern=r"/managetasks", func=lambda e: e.is_private))
     async def manage_adding_tasks_command_handler(e): await menus.send_manage_adding_tasks_menu(e, e.sender_id)
 
-    # Message handlers
     @_bot_client_instance.on(events.NewMessage(func=lambda e: e.is_private and e.contact))
     async def contact_handler(e):
         uid = e.sender_id
@@ -306,6 +310,11 @@ def register_all_handlers(bot_client_instance):
                     entity = await resolver_client.get_entity(peer_to_check)
                     resolved_chat_ids.append(entity.id)
                     await _join_chat_with_all_accounts(e, uid, entity)
+                except (ValueError, TypeError) as ex: # Correctly handle built-in ValueError and TypeError
+                    LOGGER.warning(f"Could not parse chat input '{chat_input}': {ex}")
+                    await e.respond(strings['INVALID_CHAT_ID_FORMAT'].format(chat_input=chat_input))
+                    all_chats_valid = False
+                    break
                 except Exception as ex:
                     LOGGER.warning(f"User client could not resolve chat '{chat_input}': {ex}", exc_info=True)
                     await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input))
@@ -372,7 +381,6 @@ def register_all_handlers(bot_client_instance):
         if not owner_data and action not in ["main_menu", "help", "commands", "retry_fsub"]:
             return await e.answer("Please /start the bot first.", alert=True)
 
-        # Main Menu Navigation
         if action == "main_menu": await menus.send_main_menu(e)
         elif action == "help": await menus.send_help_menu(e)
         elif action == "commands": await menus.send_commands_menu(e)
@@ -380,13 +388,9 @@ def register_all_handlers(bot_client_instance):
         elif action == "retry_fsub":
             await e.delete()
             if await menus.check_fsub(e): await e.respond("Thanks for joining!")
-        
-        # Members Adding Menu
         elif action == "members_adding_menu": await menus.send_members_adding_menu(e, uid)
         elif action == "add_member_account": await handle_add_member_account_flow(e)
         elif action == "manage_member_accounts": await menus.display_member_accounts(e, uid)
-        
-        # Account Details Menu
         elif action == "member_account_details": await menus.send_member_account_details(e, uid, j.get('account_id'))
         elif action == "confirm_delete_member_account":
             account_id = j.get('account_id')
@@ -403,8 +407,6 @@ def register_all_handlers(bot_client_instance):
                 db.update_user_account_in_owner_doc(uid, account_id, {"is_banned_for_adding": new_status})
                 await e.answer(f"Ban status set to {new_status}", alert=True)
                 await menus.send_member_account_details(e, uid, account_id)
-
-        # Task Management Menu
         elif action == "create_adding_task": await menus.send_create_adding_task_menu(e, uid)
         elif action == "manage_adding_tasks": await menus.send_manage_adding_tasks_menu(e, uid)
         elif action == "m_add_task_menu": await menus.send_adding_task_details_menu(e, uid, j.get('task_id'))
@@ -416,8 +418,6 @@ def register_all_handlers(bot_client_instance):
             task_id = j.get('task_id')
             db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_target_{task_id}"}})
             await e.edit(strings['ASK_TARGET_CHAT_ID'], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
-        
-        # Task Actions
         elif action == "start_adding_task":
             task_id = j.get('task_id')
             task_info = db.get_task_in_owner_doc(uid, task_id)
