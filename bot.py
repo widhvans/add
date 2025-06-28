@@ -41,9 +41,9 @@ async def main():
         BOT_USERNAME = me.username
         LOGGER.info(f"Bot started as @{BOT_USERNAME}. Telegram API connection successful.")
         
-        # --- CRITICAL FIX: Register handlers *after* the bot client is fully initialized and connected ---
-        # Pass the bot instance to the handlers module so it can register events
-        handlers.register_all_handlers(bot) 
+        # --- CRITICAL FIX: Pass the bot instance to handlers and menus modules ---
+        handlers.set_bot_client_for_modules(bot)
+        menus.set_bot_client(bot) # <-- THIS LINE WAS MISSING AND IS NOW ADDED
         LOGGER.info("All event handlers registered successfully.")
         
         # Pass the config instance to members_adder module (no direct import there)
@@ -55,7 +55,7 @@ async def main():
         all_owners = db.users_db.find({})
         member_account_count = 0
         active_adding_tasks_count = 0
-        for owner_doc in all_owners:
+        async for owner_doc in all_owners: # Use async for cursor iteration
             owner_id = owner_doc.get('chat_id')
             # Connect all user clients for adding
             for acc in owner_doc.get('user_accounts', []):
@@ -89,17 +89,16 @@ async def main():
         
         LOGGER.info("Bot is fully operational and listening for events. Press Ctrl+C to stop.")
         # Run the bot until disconnected. This keeps the event loop alive.
-        await bot.run_until_disconnected() # Corrected typo: run_until_disconnected
+        await bot.run_until_disconnected()
 
     except Exception as e:
-        LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True) # Use exc_info=True to print full traceback
+        LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True)
     finally:
         LOGGER.info("Stopping bot and performing cleanup...")
         
         # Stop all member adding clients
         for client in list(members_adder.USER_CLIENTS.values()):
             if client.is_connected():
-                # CRITICAL FIX: Simply disconnect and log the client's ID, not session.get_update_info()
                 try:
                     me_info = await client.get_me()
                     log_id = me_info.id if me_info else "Unknown"
@@ -114,15 +113,15 @@ async def main():
             if task_id in members_adder.ACTIVE_ADDING_TASKS:
                 task = members_adder.ACTIVE_ADDING_TASKS[task_id]
                 if not task.done():
-                    task.cancel() # Request cancellation
+                    task.cancel()
                     try:
-                        await task # Await cancellation to complete
+                        await task
                     except asyncio.CancelledError:
                         LOGGER.info(f"Task {task_id} successfully cancelled during shutdown.")
                 del members_adder.ACTIVE_ADDING_TASKS[task_id]
 
         # Clean up any residual login clients that might be active but not fully processed
-        if hasattr(handlers, 'ONGOING_LOGIN_CLIENTS'): # Check if attribute exists
+        if hasattr(handlers, 'ONGOING_LOGIN_CLIENTS'):
             for user_id in list(handlers.ONGOING_LOGIN_CLIENTS.keys()):
                 client = handlers.ONGOING_LOGIN_CLIENTS.pop(user_id)
                 if client.is_connected():
@@ -135,7 +134,7 @@ async def main():
                         LOGGER.info(f"Disconnecting leftover temporary login client for user {user_id}")
                     await client.disconnect()
 
-        db.close_db() # Close MongoDB connection
+        db.close_db()
         LOGGER.info("All processes stopped. Bot gracefully shut down.")
 
 if __name__ == "__main__":
