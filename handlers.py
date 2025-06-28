@@ -12,7 +12,8 @@ from telethon.tl.types import ReplyKeyboardMarkup, KeyboardButton, KeyboardButto
 from telethon.errors import (
     SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError,
     FloodWaitError, UserIsBlockedError, InputUserDeactivatedError,
-    UserNotParticipantError, MessageNotModifiedError, PhoneCodeExpiredError # Import PhoneCodeExpiredError
+    UserNotParticipantError, MessageNotModifiedError, PhoneCodeExpiredError,
+    ChannelPrivateError, UserAlreadyParticipantError # Import necessary exceptions for auto-join
 )
 
 from config import config
@@ -55,6 +56,40 @@ async def handle_add_member_account_flow(e):
     
     await e.respond(strings['ADD_ACCOUNT_NUMBER_PROMPT'], parse_mode='Markdown')
 
+# NEW HELPER: Auto-join a chat with all active user accounts
+async def _join_chat_with_all_accounts(e, uid, entity):
+    """Attempts to join a given chat/channel with all of the user's active accounts."""
+    await e.respond(strings['ACCOUNTS_JOINING_CHAT'], parse_mode='Markdown')
+    
+    owner_doc = db.get_user_data(uid)
+    accounts_to_join = [acc for acc in utils.get(owner_doc, 'user_accounts', []) if acc.get('logged_in')]
+    
+    join_success = 0
+    join_fail = 0
+
+    for acc in accounts_to_join:
+        acc_id = acc.get('account_id')
+        client = await members_adder.get_user_client(acc_id)
+        if client:
+            try:
+                await client(functions.channels.JoinChannelRequest(channel=entity))
+                join_success += 1
+                LOGGER.info(f"Account {acc_id} successfully joined {entity.id}")
+                await asyncio.sleep(random.uniform(1, 2)) # Small delay between joins
+            except UserAlreadyParticipantError:
+                join_success += 1 # Already a member, count as success
+                LOGGER.info(f"Account {acc_id} was already in {entity.id}")
+            except Exception as join_ex:
+                join_fail += 1
+                LOGGER.warning(f"Account {acc_id} failed to join {entity.id}: {join_ex}")
+        else:
+            join_fail += 1
+            LOGGER.warning(f"Could not get a valid client for account {acc_id} to join chat.")
+
+    await e.respond(
+        strings['ACCOUNTS_JOIN_COMPLETE'].format(success_count=join_success, fail_count=join_fail),
+        parse_mode='Markdown'
+    )
 
 # Centralized helper for handling OTP/Password input and login attempt for member accounts
 async def _handle_member_account_login_step(e, uid, account_id, input_text):
@@ -258,7 +293,7 @@ async def _initiate_member_account_login_flow(e, uid, existing_account_id, phone
         await processing_msg.delete() # Delete the "Processing..." message
 
         # CRITICAL FIX: If code_request fails, remove the incomplete account entry for new adds
-        if current_state == "awaiting_member_account_number" and account_id_for_db_update:
+        if current_state == "awaiting_member_account_number" and 'account_id_for_db_update' in locals() and account_id_for_db_update:
             db.update_user_data(uid, {"$pull": {"user_accounts": {"account_id": account_id_for_db_update}}})
         
         db.update_user_data(uid, {"$set": {"state": None}}) # Clear owner state
@@ -442,7 +477,7 @@ def register_all_handlers(bot_client_instance):
             
             # If no valid numbers were initiated for login
             if not any(re.match(r"^\+\d{10,15}$", p.replace(" ", "")) for p in phone_numbers_raw if p.strip()):
-                 await e.respond("No valid phone numbers provided. Please send numbers in international format, one per line.", parse_mode='html')
+                await e.respond("No valid phone numbers provided. Please send numbers in international format, one per line.", parse_mode='html')
             
             return # Exit handler after processing phone number input
 
@@ -465,25 +500,31 @@ def register_all_handlers(bot_client_instance):
             if len(chat_inputs_raw) > 5: # Limit source chats to 5
                 return await e.respond(strings['TOO_MANY_SOURCE_CHATS'], parse_mode='Markdown')
 
+            all_chats_valid = True
             for chat_input_raw in chat_inputs_raw:
                 chat_input = chat_input_raw.strip()
                 if not chat_input: continue
 
                 try:
+                    # Use bot client to resolve entity first
                     entity = await _bot_client_instance.get_entity(chat_input)
                     source_chat_ids.append(entity.id)
+                    # NEW: Auto-join logic
+                    await _join_chat_with_all_accounts(e, uid, entity)
                 except Exception as ex:
                     LOGGER.warning(f"Could not resolve source chat '{chat_input}': {ex}", exc_info=True)
                     await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input), parse_mode='Markdown')
-                    return # Stop process if any chat is invalid
+                    all_chats_valid = False
+                    break # Stop process if any chat is invalid
 
-            if source_chat_ids:
+            if all_chats_valid and source_chat_ids:
                 db.update_task_in_owner_doc(uid, task_id, {"$set": {"adding_tasks.$.source_chat_ids": source_chat_ids}})
                 db.update_user_data(uid, {"$unset": {"state": 1}}) # Clear state
                 await e.respond(strings['TASK_SOURCE_SET'].format(task_id=task_id), parse_mode='Markdown')
                 await menus.send_adding_task_details_menu(e, uid, task_id)
-            else:
+            elif not source_chat_ids and all_chats_valid:
                 await e.respond(strings['INVALID_CHAT_ID_FORMAT'].format(chat_input="Provided input"), parse_mode='Markdown')
+
 
         elif state and state.startswith("awaiting_chat_input_target_"):
             task_id = int(state.split('_')[-1])
@@ -493,8 +534,11 @@ def register_all_handlers(bot_client_instance):
                 return await e.respond("Please provide a single target chat ID or username.", parse_mode='Markdown')
 
             try:
+                # Use bot client to resolve entity first
                 entity = await _bot_client_instance.get_entity(chat_input)
                 target_chat_id = entity.id
+                # NEW: Auto-join logic
+                await _join_chat_with_all_accounts(e, uid, entity)
             except Exception as ex:
                 LOGGER.warning(f"Could not resolve target chat '{chat_input}': {ex}", exc_info=True)
                 await e.respond(strings['CHAT_NOT_FOUND_OR_ACCESSIBLE'].format(chat_input=chat_input), parse_mode='Markdown')
@@ -564,39 +608,6 @@ def register_all_handlers(bot_client_instance):
                 await e.respond("Okay, no more accounts for now. You can manage your accounts via /settings.", buttons=None)
             await menus.send_members_adding_menu(e, uid)
             return await e.answer("Okay!", alert=True)
-
-        # CRITICAL FIX: Restructured m_add_set callback processing and add assign_accounts_to_task
-        if raw_data.startswith("m_add_set|"): # From "Set Source/Target Chat" buttons in Task Details menu
-            try:
-                _, selection_type, task_id_str = raw_data.split("|") # page_str is no longer part of this action
-                task_id = int(task_id_str)
-                
-                # This part is now exclusively for setting state for direct chat ID input
-                prompt_key = ""
-                if selection_type == 'from':
-                    prompt_key = 'ASK_SOURCE_CHAT_ID'
-                    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_source_{task_id}"}})
-                elif selection_type == 'to':
-                    prompt_key = 'ASK_TARGET_CHAT_ID'
-                    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_target_{task_id}"}})
-                
-                await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
-            except Exception as ex:
-                LOGGER.error(f"Error processing callback 'm_add_set': {ex}", exc_info=True)
-                await e.answer("An error occurred. Please try again.", alert=True)
-            return # IMPORTANT: Always return after processing a unique callback type.
-
-        elif raw_data.startswith('{"action":"assign_accounts_to_task",'): # Handling assign_accounts_to_task callback
-            try:
-                j = json.loads(raw_data)
-                task_id = utils.get(j, 'task_id')
-                if task_id:
-                    await menus.send_assign_accounts_menu(e, uid, task_id)
-            except Exception as ex:
-                LOGGER.error(f"Error processing assign_accounts_to_task callback: {ex}", exc_info=True)
-                await e.answer("An error occurred.", alert=True)
-            return # IMPORTANT: Always return after processing a unique callback type.
-
 
         if raw_data == 'noop' or raw_data == '{"action":"noop"}':
             return await e.answer()
@@ -698,8 +709,8 @@ def register_all_handlers(bot_client_instance):
                 account_info = db.find_user_account_in_owner_doc(uid, account_id)
                 if account_info:
                     new_ban_status = not utils.get(account_info, 'is_banned_for_adding', False)
-                    db.update_user_account_in_owner_doc(uid, account_id, {"$set": {"user_accounts.$.is_banned_for_adding": new_ban_status}})
-                    await e.answer(f"Account <code>{account_id}</code> ban status toggled to {'Banned' if new_ban_status else 'Unbanned'}.", alert=True)
+                    db.update_user_account_in_owner_doc(uid, account_id, {"is_banned_for_adding": new_ban_status}) # Simplified update call
+                    await e.answer(f"Account {account_id} ban status toggled to {'Banned' if new_ban_status else 'Unbanned'}.", alert=True)
                     await menus.send_member_account_details(e, uid, account_id)
                 else:
                     await e.answer("Account not found.", alert=True)
@@ -710,6 +721,18 @@ def register_all_handlers(bot_client_instance):
             elif action == "m_add_task_menu":
                 task_id = utils.get(j, 'task_id')
                 await menus.send_adding_task_details_menu(e, uid, task_id)
+                
+            # FIX: Handle new actions for setting source/target chat
+            elif action == "set_task_source_chat":
+                task_id = utils.get(j, 'task_id')
+                db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_source_{task_id}"}})
+                await e.edit(strings['ASK_SOURCE_CHAT_ID'], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
+
+            elif action == "set_task_target_chat":
+                task_id = utils.get(j, 'task_id')
+                db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_target_{task_id}"}})
+                await e.edit(strings['ASK_TARGET_CHAT_ID'], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
+
             elif action == "start_adding_task":
                 task_id = utils.get(j, 'task_id')
                 task_to_start = db.get_task_in_owner_doc(uid, task_id)
@@ -750,15 +773,12 @@ def register_all_handlers(bot_client_instance):
             return await e.answer()
             
         try:
-            j = json.loads(raw_data)
-            pr=utils.get(j,'press')
-            if not owner_data: return await e.answer("User data not found. Please /start again.", alert=True)
-            
-            state = utils.get(owner_data, 'state')
-            
-            # This handles OTP numpad presses (if it were still enabled for 2FA, or if a bug re-introduces it)
-            # Given that we removed the numpad, this part is now for callback query presses that are unexpected.
-            await e.answer("Please send the OTP directly as a message.") # Fallback for unexpected numpad-like presses
+            # This block is now mostly a fallback, as JSON actions are preferred.
+            # It can be kept for simple, non-JSON callbacks if any exist.
+            # We'll check if the raw_data is a simple string that needs handling.
+            # Given the current structure, most actions are JSON based.
+            # The yes/no handlers already catch non-JSON data.
+            pass
 
         except (json.JSONDecodeError, KeyError):
             await e.answer("An unknown error occurred.")
