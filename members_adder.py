@@ -104,7 +104,7 @@ async def get_user_client(user_account_id):
     if not account_info or not utils.get(account_info, 'session_string'):
         LOGGER.warning(f"No session string found for user account {user_account_id}.")
         db.update_user_account_in_owner_doc(owner_data['chat_id'], user_account_id,
-            {"$set": {"user_accounts.$.logged_in": False, "user_accounts.$.is_active_for_adding": False, "user_accounts.$.is_banned_for_adding": False}}
+            {"logged_in": False, "is_active_for_adding": False, "is_banned_for_adding": False}
         )
         return None
 
@@ -116,7 +116,7 @@ async def get_user_client(user_account_id):
         if not await client.is_user_authorized():
             LOGGER.warning(f"Session invalid for user account {user_account_id}. Marking as logged_in=False.")
             db.update_user_account_in_owner_doc(owner_data['chat_id'], user_account_id,
-                {"$set": {"user_accounts.$.logged_in": False, "user_accounts.$.is_active_for_adding": False, "user_accounts.$.is_banned_for_adding": False}}
+                {"logged_in": False, "is_active_for_adding": False, "is_banned_for_adding": False}
             )
             await client.disconnect()
             return None
@@ -126,7 +126,7 @@ async def get_user_client(user_account_id):
     except Exception as e:
         LOGGER.error(f"Failed to connect or authorize client for {user_account_id}: {e}")
         db.update_user_account_in_owner_doc(owner_data['chat_id'], user_account_id,
-            {"$set": {"user_accounts.$.logged_in": False, "user_accounts.$.is_active_for_adding": False, "user_accounts.$.is_banned_for_adding": False}}
+            {"logged_in": False, "is_active_for_adding": False, "is_banned_for_adding": False}
         )
         if client.is_connected():
             await client.disconnect()
@@ -150,24 +150,28 @@ async def scrape_members(client, source_chat_id, limit=None):
                 break
             
             for user in participants.users:
-                if not user.bot and not user.is_self and user.status and not isinstance(user.status, (type(None), functions.contacts.Blocked, functions.contacts.BlockedWait)):
+                # BUG FIX: Corrected the filtering logic to be robust and avoid crashes.
+                # We filter out bots, deleted accounts, and the scraper's own account.
+                if not user.bot and not user.deleted and not user.is_self:
                     members.append(user)
                     if len(members) >= actual_limit:
                         break
             
-            offset += len(participants.users)
-            if len(members) >= actual_limit or not participants.users:
+            if len(members) >= actual_limit or len(participants.users) < 100:
                 break
+                
+            offset += len(participants.users)
             await asyncio.sleep(random.uniform(1, 3))
 
     except FloodWaitError as e:
-        LOGGER.warning(f"Scraping FloodWait for {client.session.dc_id}: {e.seconds}s. Waiting...")
+        LOGGER.warning(f"Scraping FloodWait on account: {e.seconds}s. Waiting...")
         await asyncio.sleep(e.seconds + random.uniform(5, 10))
     except Exception as e:
         LOGGER.error(f"Error scraping members from {source_chat_id}: {e}")
     
     LOGGER.info(f"Scraped {len(members)} members from {source_chat_id}")
     return members
+
 
 async def add_member_to_group(user_client, target_chat_id, member_user, task_id, account_id, owner_id):
     try:
@@ -178,29 +182,29 @@ async def add_member_to_group(user_client, target_chat_id, member_user, task_id,
         LOGGER.info(f"Account {account_id}: Successfully added {member_user.id} to {target_chat_id} for Task {task_id}")
         
         db.update_user_account_in_owner_doc(owner_id, account_id,
-            {"$inc": {"user_accounts.$.daily_adds_count": 1}, "$set": {"user_accounts.$.last_add_date": time.time()}}
+            {"$inc": {"daily_adds_count": 1}, "$set": {"last_add_date": time.time()}}
         )
         return True, "Success"
     except UserAlreadyParticipantError:
         LOGGER.info(f"Account {account_id}: Member {member_user.id} already in {target_chat_id}. Skipping.")
         return False, "AlreadyParticipant"
     except UserPrivacyRestrictedError:
-        LOGGER.warning(f"Account {account_id}: Member {member_user.id} has privacy restrictions for adding. Skipping.")
+        LOGGER.warning(f"Account {account_id}: Member {member_user.id} has privacy restrictions. Skipping.")
         db.update_user_account_in_owner_doc(owner_id, account_id,
-            {"$inc": {"user_accounts.$.soft_error_count": 1}}
+            {"$inc": {"soft_error_count": 1}}
         )
         return False, "PrivacyRestricted"
     except PeerFloodError as e:
         LOGGER.error(f"Account {account_id}: PeerFloodError detected! Message: {e}. Suspending account.")
         db.update_user_account_in_owner_doc(owner_id, account_id,
-            {"$set": {"user_accounts.$.is_banned_for_adding": True, "user_accounts.$.last_error_time": time.time(), "user_accounts.$.error_type": "PeerFlood"}}
+            {"is_banned_for_adding": True, "last_error_time": time.time(), "error_type": "PeerFlood"}
         )
         await bot_client.send_message(owner_id, strings['PEER_FLOOD_DETECTED'].format(account_id=account_id), parse_mode='html')
         return False, "PeerFlood"
     except FloodWaitError as e:
-        LOGGER.warning(f"Account {account_id}: FloodWaitError for {e.seconds}s. Pausing adding for this account.")
+        LOGGER.warning(f"Account {account_id}: FloodWaitError for {e.seconds}s. Pausing adding.")
         db.update_user_account_in_owner_doc(owner_id, account_id,
-            {"$set": {"user_accounts.$.flood_wait_until": time.time() + e.seconds, "user_accounts.$.last_error_time": time.time(), "user_accounts.$.error_type": "FloodWait"}}
+            {"flood_wait_until": time.time() + e.seconds, "last_error_time": time.time(), "error_type": "FloodWait"}
         )
         await asyncio.sleep(e.seconds + random.uniform(5, 10))
         return False, "FloodWait"
@@ -210,7 +214,7 @@ async def add_member_to_group(user_client, target_chat_id, member_user, task_id,
     except Exception as e:
         LOGGER.error(f"Account {account_id}: Failed to add {member_user.id} to {target_chat_id}: {e}")
         db.update_user_account_in_owner_doc(owner_id, account_id,
-            {"$inc": {"user_accounts.$.soft_error_count": 1}}
+            {"$inc": {"soft_error_count": 1}}
         )
         return False, str(e)
 
@@ -308,23 +312,19 @@ async def manage_adding_task(owner_id, task_id):
                 break
 
             available_accounts = []
+            owner_doc_for_accounts = db.get_user_data(owner_id) # Re-fetch to get latest account status
             for acc_id in assigned_account_ids:
-                acc_info = db.find_user_account_in_owner_doc(owner_id, acc_id)
-                if acc_info and utils.get(acc_info, 'logged_in') and \
-                   not utils.get(acc_info, 'is_banned_for_adding') and \
-                   utils.get(acc_info, 'flood_wait_until', 0) < time.time():
+                acc_info = db.find_user_account_in_owner_doc(owner_id, acc_id) # This is better
+                if acc_info and acc_info.get('logged_in') and not acc_info.get('is_banned_for_adding') and acc_info.get('flood_wait_until', 0) < time.time():
                     
-                    today = datetime.date.today()
-                    last_add_date = utils.get(acc_info, 'last_add_date')
-                    if last_add_date:
-                        last_add_date_dt = datetime.datetime.fromtimestamp(last_add_date).date()
-                        if last_add_date_dt < today:
-                            db.update_user_account_in_owner_doc(owner_id, acc_id, {"$set": {"user_accounts.$.daily_adds_count": 0, "user_accounts.$.soft_error_count": 0, "user_accounts.$.last_add_date": time.time()}})
-                            acc_info['daily_adds_count'] = 0
-                            acc_info['soft_error_count'] = 0
+                    today_start_ts = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+                    if acc_info.get('last_add_date', 0) < today_start_ts:
+                        db.update_user_account_in_owner_doc(owner_id, acc_id, {"daily_adds_count": 0, "soft_error_count": 0})
+                        acc_info['daily_adds_count'] = 0
+                        acc_info['soft_error_count'] = 0
 
-                    if utils.get(acc_info, 'daily_adds_count', 0) < current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT and \
-                       utils.get(acc_info, 'soft_error_count', 0) < current_config_instance.SOFT_ADD_LIMIT_ERRORS:
+                    if acc_info.get('daily_adds_count', 0) < current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT and \
+                       acc_info.get('soft_error_count', 0) < current_config_instance.SOFT_ADD_LIMIT_ERRORS:
                         client = await get_user_client(acc_id)
                         if client:
                             available_accounts.append((acc_id, client, acc_info))
@@ -347,13 +347,12 @@ async def manage_adding_task(owner_id, task_id):
                 added_count_for_task += 1
                 db.update_task_in_owner_doc(owner_id, task_id, {"$inc": {"adding_tasks.$.added_members_count": 1}})
 
-            if utils.get(account_data, 'daily_adds_count', 0) >= current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT or \
-               utils.get(account_data, 'soft_error_count', 0) >= current_config_instance.SOFT_ADD_LIMIT_ERRORS:
+            if utils.get(account_data, 'daily_adds_count', 0) + 1 >= current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT or \
+               utils.get(account_data, 'soft_error_count', 0) + (1 if not success and reason not in ["AlreadyParticipant", "UserBlocked"] else 0) >= current_config_instance.SOFT_ADD_LIMIT_ERRORS:
                 await bot_client.send_message(owner_id, strings['ADDING_LIMIT_REACHED'].format(account_id=account_id, limit=current_config_instance.MAX_DAILY_ADDS_PER_ACCOUNT), parse_mode='html')
             
-            progress_percent = (added_count_for_task / total_members_to_process) * 100
-            
-            if added_count_for_task % 5 == 0 or added_count_for_task == 1:
+            if total_members_to_process > 0 and (added_count_for_task % 5 == 0 or added_count_for_task == 1):
+                progress_percent = (added_count_for_task / total_members_to_process) * 100
                 progress_msg_text = strings['TASK_PROGRESS'].format(
                     task_id=task_id, added_count=added_count_for_task, total_members=total_members_to_process,
                     progress=progress_percent, account_id=account_id
@@ -432,9 +431,25 @@ async def stop_user_adding_clients(owner_id):
                 LOGGER.info(f"Disconnected user client {acc_id} for owner {owner_id}.")
 
 async def get_chat_title(client, chat_id):
+    """
+    More robustly gets a chat title. Handles cases where the entity is not in cache.
+    """
     try:
         entity = await client.get_entity(chat_id)
-        return entity.title if hasattr(entity, 'title') else entity.username or f"User {entity.id}"
+        # Return title for chats/channels, or username/full_name for users
+        if hasattr(entity, 'title'):
+            return entity.title
+        else:
+            name = ""
+            if hasattr(entity, 'first_name'):
+                name += entity.first_name + " "
+            if hasattr(entity, 'last_name') and entity.last_name:
+                name += entity.last_name
+            return name.strip() or f"User ID: {entity.id}"
+    except (ValueError, TypeError) as e:
+        # This specifically catches "Could not find the input entity" errors
+        LOGGER.warning(f"Could not resolve entity for chat_id {chat_id}: {e}")
+        return f"ID: `{chat_id}` (Unresolved)"
     except Exception as e:
-        LOGGER.warning(f"Could not get title for chat {chat_id}: {e}")
-        return f"ID: <code>{chat_id}</code>"
+        LOGGER.error(f"Unexpected error getting title for chat {chat_id}: {e}")
+        return f"ID: `{chat_id}` (Error)"
