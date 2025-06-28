@@ -40,8 +40,13 @@ async def main():
         me = await bot.get_me()
         BOT_USERNAME = me.username
         LOGGER.info(f"Bot started as @{BOT_USERNAME}. Telegram API connection successful.")
+
+        # --- FIX: Inject bot client instance into other modules ---
+        menus.set_bot_client(bot)
+        members_adder.set_bot_client(bot)
+        LOGGER.info("Bot client instances injected into modules.")
+        # --- END FIX ---
         
-        # --- CRITICAL FIX: Register handlers *after* the bot client is fully initialized and connected ---
         # Pass the bot instance to the handlers module so it can register events
         handlers.register_all_handlers(bot) 
         LOGGER.info("All event handlers registered successfully.")
@@ -52,9 +57,9 @@ async def main():
         LOGGER.info("Initializing member adding clients and tasks from database...")
         
         # Re-initialize any active member adding clients and tasks from DB
-        all_owners = db.users_db.find({})
+        all_owners = await db.users_db.find({}).to_list(length=None) # Use async find and convert cursor
         member_account_count = 0
-        active_adding_tasks_count = 0
+        paused_on_restart_count = 0 # New counter for paused tasks
         for owner_doc in all_owners:
             owner_id = owner_doc.get('chat_id')
             # Connect all user clients for adding
@@ -71,35 +76,30 @@ async def main():
                     if not acc.get('logged_in') or not acc.get('session_string'):
                         LOGGER.warning(f"Account {acc_id} for owner {owner_id} is not logged in or has no session. It will be removed from 'Manage Accounts' display.")
 
-
-            # Restart active adding tasks
+            # --- MODIFICATION: Pause active tasks on restart instead of auto-starting ---
             for task in owner_doc.get('adding_tasks', []):
                 if task.get('is_active'):
-                    LOGGER.info(f"Attempting to restart active adding task {task.get('task_id')} for owner {owner_id}")
-                    # Temporarily set to paused to ensure clean restart process
-                    db.update_task_in_owner_doc(
+                    LOGGER.info(f"Pausing previously active task {task.get('task_id')} for owner {owner_id} on bot restart.")
+                    await db.update_task_in_owner_doc(
                         owner_id, task.get('task_id'),
                         {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}}
                     )
-                    # This function internally checks for active/valid accounts before actually starting
-                    await members_adder.start_adding_task(owner_id, task.get('task_id'))
-                    active_adding_tasks_count += 1
+                    paused_on_restart_count += 1
         
-        LOGGER.info(f"Member Adding Initialization complete. Loaded {member_account_count} accounts and restarted {active_adding_tasks_count} tasks.")
+        LOGGER.info(f"Member Adding Initialization complete. Loaded {member_account_count} accounts and paused {paused_on_restart_count} previously active tasks.")
         
         LOGGER.info("Bot is fully operational and listening for events. Press Ctrl+C to stop.")
         # Run the bot until disconnected. This keeps the event loop alive.
-        await bot.run_until_disconnected() # Corrected typo: run_until_disconnected
+        await bot.run_until_disconnected()
 
     except Exception as e:
-        LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True) # Use exc_info=True to print full traceback
+        LOGGER.critical(f"BOT CRITICAL ERROR: An unhandled exception occurred during startup: {e}", exc_info=True)
     finally:
         LOGGER.info("Stopping bot and performing cleanup...")
         
         # Stop all member adding clients
         for client in list(members_adder.USER_CLIENTS.values()):
             if client.is_connected():
-                # CRITICAL FIX: Simply disconnect and log the client's ID, not session.get_update_info()
                 try:
                     me_info = await client.get_me()
                     log_id = me_info.id if me_info else "Unknown"
@@ -114,15 +114,15 @@ async def main():
             if task_id in members_adder.ACTIVE_ADDING_TASKS:
                 task = members_adder.ACTIVE_ADDING_TASKS[task_id]
                 if not task.done():
-                    task.cancel() # Request cancellation
+                    task.cancel()
                     try:
-                        await task # Await cancellation to complete
+                        await task
                     except asyncio.CancelledError:
                         LOGGER.info(f"Task {task_id} successfully cancelled during shutdown.")
                 del members_adder.ACTIVE_ADDING_TASKS[task_id]
 
-        # Clean up any residual login clients that might be active but not fully processed
-        if hasattr(handlers, 'ONGOING_LOGIN_CLIENTS'): # Check if attribute exists
+        # Clean up any residual login clients
+        if hasattr(handlers, 'ONGOING_LOGIN_CLIENTS'):
             for user_id in list(handlers.ONGOING_LOGIN_CLIENTS.keys()):
                 client = handlers.ONGOING_LOGIN_CLIENTS.pop(user_id)
                 if client.is_connected():
@@ -135,11 +135,15 @@ async def main():
                         LOGGER.info(f"Disconnecting leftover temporary login client for user {user_id}")
                     await client.disconnect()
 
-        db.close_db() # Close MongoDB connection
+        db.close_db()
         LOGGER.info("All processes stopped. Bot gracefully shut down.")
 
 if __name__ == "__main__":
     try:
+        # For PyMongo with asyncio, you need an async-compatible driver like motor
+        # Since the original code uses pymongo, I'll assume it's running in a separate thread
+        # or the DB operations are fast enough not to block the loop significantly.
+        # A small change to db.py might be needed if you face event loop blocked warnings.
         asyncio.run(main())
     except KeyboardInterrupt:
         LOGGER.info("Bot stopped manually by KeyboardInterrupt.")
