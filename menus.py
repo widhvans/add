@@ -1,5 +1,3 @@
-# menus.py
-
 from telethon.tl.custom.button import Button
 import datetime
 import time
@@ -55,22 +53,22 @@ async def send_main_menu(e):
 async def send_help_menu(e):
     try:
         await e.edit(strings['HELP_TEXT_FEATURES'],
-                           buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                           parse_mode='Markdown')
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='Markdown')
     except Exception:
         await e.respond(strings['HELP_TEXT_FEATURES'],
-                           buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                           parse_mode='Markdown')
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='Markdown')
 
 async def send_commands_menu(e):
     try:
         await e.edit(strings['COMMANDS_TEXT'],
-                           buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                           parse_mode='Markdown')
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='Markdown')
     except Exception:
         await e.respond(strings['COMMANDS_TEXT'],
-                           buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                           parse_mode='Markdown')
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='Markdown')
 
 async def send_settings_menu(e):
     text = strings['SETTINGS_MENU_TEXT']
@@ -311,7 +309,7 @@ async def send_adding_task_details_menu(e, uid, task_id):
 
     status_text = strings[f'TASK_STATUS_{utils.get(task, "status", "draft").upper()}']
 
-    source_chat_info_display = "*Not Set*"
+    source_chat_info_display = "Not Set"
     import members_adder 
     source_chat_ids = utils.get(task, 'source_chat_ids', [])
     if source_chat_ids:
@@ -321,7 +319,7 @@ async def send_adding_task_details_menu(e, uid, task_id):
             except: source_titles.append(f"ID: `{chat_id}`")
         source_chat_info_display = "\n".join(source_titles)
 
-    target_chat_info_display = "*Not Set*"
+    target_chat_info_display = "Not Set"
     target_chat_id = utils.get(task, 'target_chat_id')
     if target_chat_id:
         try: target_chat_info_display = await members_adder.get_chat_title(bot_client, target_chat_id)
@@ -332,7 +330,7 @@ async def send_adding_task_details_menu(e, uid, task_id):
         acc_info = db.find_user_account_in_owner_doc(uid, acc_id)
         if acc_info:
             assigned_accounts_info.append(f"`{utils.get(acc_info, 'phone_number', f'ID: {acc_id}')}`")
-    assigned_accounts_display = ", ".join(assigned_accounts_info) if assigned_accounts_info else "*None*"
+    assigned_accounts_display = ", ".join(assigned_accounts_info) if assigned_accounts_info else "None"
 
     total_added_members = utils.get(task, 'added_members_count', 0)
 
@@ -346,16 +344,14 @@ async def send_adding_task_details_menu(e, uid, task_id):
     )
 
     buttons = [
-        # --- FIX: Changed callback data to match the handler in handlers.py ---
-        [Button.inline("📤 Set Source Chat(s)", f'm_add_set|from|{task_id}')],
-        [Button.inline("📥 Set Target Chat", f'm_add_set|to|{task_id}')],
-        # --- END FIX ---
+        [Button.inline("📤 Set Source Chat(s)", f'{{"action":"set_task_source_chat","task_id":{task_id}}}')],
+        [Button.inline("📥 Set Target Chat", f'{{"action":"set_task_target_chat","task_id":{task_id}}}')],
         [Button.inline("👥 Assign Accounts", f'{{"action":"assign_accounts_to_task","task_id":{task_id}}}')]
     ]
     
     if utils.get(task, 'status') == 'active':
         buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
-    elif utils.get(task, 'status') in ['paused', 'draft', 'completed']:
+    elif utils.get(task, 'status') == 'paused' or utils.get(task, 'status') == 'draft' or utils.get(task, 'status') == 'completed':
         # Only allow start if all required configurations are done
         if utils.get(task, 'source_chat_ids') and utils.get(task, 'target_chat_id') and utils.get(task, 'assigned_accounts'):
             buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
@@ -395,9 +391,8 @@ async def send_assign_accounts_menu(e, uid, task_id):
     except Exception:
         await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
-# This function is no longer called by any active button flow after the fix,
-# but we can leave it in case it's needed for future development.
-# The current flow sets a state and waits for direct text input.
+# send_chat_selection_menu is now modified to handle direct ID/username input.
+# It will no longer offer an interactive list of chats for selection.
 async def send_chat_selection_menu(e, uid, selection_type, task_id): # Removed page parameter
     prompt_key = ""
     if selection_type == 'from':
