@@ -41,7 +41,7 @@ async def main():
         BOT_USERNAME = me.username
         LOGGER.info(f"Bot started as @{BOT_USERNAME}. Telegram API connection successful.")
         
-        # --- CRITICAL FIX: Pass the bot instance to handlers and menus modules ---
+        # Pass the bot instance to handlers and menus modules
         handlers.set_bot_client_for_modules(bot)
         menus.set_bot_client(bot)
         LOGGER.info("All event handlers registered successfully.")
@@ -55,37 +55,37 @@ async def main():
         all_owners = db.users_db.find({})
         member_account_count = 0
         active_adding_tasks_count = 0
-        
-        # --- THIS IS THE CORRECTED LINE ---
-        for owner_doc in all_owners: # Use a standard 'for' loop for the synchronous pymongo cursor
+        # --- FIX: Reverted from 'async for' to 'for' as pymongo cursor is synchronous ---
+        for owner_doc in all_owners:
             owner_id = owner_doc.get('chat_id')
             # Connect all user clients for adding
-            for acc in owner_doc.get('user_accounts', []):
-                acc_id = acc.get('account_id')
-                # Only try to connect if it's marked as logged_in and has a session string
-                if acc_id and acc.get('logged_in') and acc.get('session_string'):
-                    client = await members_adder.get_user_client(acc_id)
-                    if client:
-                        LOGGER.info(f"Loaded and connected member adding client {acc_id} for owner {owner_id}.")
-                        member_account_count += 1
-                else:
-                    # Log if an account will be cleaned up to provide feedback
-                    if not acc.get('logged_in') or not acc.get('session_string'):
-                        LOGGER.warning(f"Account {acc_id} for owner {owner_id} is not logged in or has no session. It will be removed from 'Manage Accounts' display.")
-
+            if 'user_accounts' in owner_doc:
+                for acc in owner_doc.get('user_accounts', []):
+                    acc_id = acc.get('account_id')
+                    # Only try to connect if it's marked as logged_in and has a session string
+                    if acc_id and acc.get('logged_in') and acc.get('session_string'):
+                        client = await members_adder.get_user_client(acc_id)
+                        if client:
+                            LOGGER.info(f"Loaded and connected member adding client {acc_id} for owner {owner_id}.")
+                            member_account_count += 1
+                    else:
+                        # Log if an account will be cleaned up to provide feedback
+                        if not acc.get('logged_in') or not acc.get('session_string'):
+                            LOGGER.warning(f"Account {acc_id} for owner {owner_id} is not logged in or has no session. It will be removed from 'Manage Accounts' display.")
 
             # Restart active adding tasks
-            for task in owner_doc.get('adding_tasks', []):
-                if task.get('is_active'):
-                    LOGGER.info(f"Attempting to restart active adding task {task.get('task_id')} for owner {owner_id}")
-                    # Temporarily set to paused to ensure clean restart process
-                    db.update_task_in_owner_doc(
-                        owner_id, task.get('task_id'),
-                        {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}}
-                    )
-                    # This function internally checks for active/valid accounts before actually starting
-                    await members_adder.start_adding_task(owner_id, task.get('task_id'))
-                    active_adding_tasks_count += 1
+            if 'adding_tasks' in owner_doc:
+                for task in owner_doc.get('adding_tasks', []):
+                    if task.get('is_active'):
+                        LOGGER.info(f"Attempting to restart active adding task {task.get('task_id')} for owner {owner_id}")
+                        # Temporarily set to paused to ensure clean restart process
+                        db.update_task_in_owner_doc(
+                            owner_id, task.get('task_id'),
+                            {"$set": {"adding_tasks.$.is_active": False, "adding_tasks.$.status": "paused"}}
+                        )
+                        # This function internally checks for active/valid accounts before actually starting
+                        await members_adder.start_adding_task(owner_id, task.get('task_id'))
+                        active_adding_tasks_count += 1
         
         LOGGER.info(f"Member Adding Initialization complete. Loaded {member_account_count} accounts and restarted {active_adding_tasks_count} tasks.")
         
