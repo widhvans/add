@@ -56,6 +56,10 @@ strings = {
 
     'SETTINGS_MENU_TEXT': "⚙️ **Bot Settings**\n\nThis is your main control panel.",
     'CREATE_TASK_PROMPT': "To create a new adding task, please select a **source chat** by its ID or username.",
+    
+    # BUG FIX: Added the missing string key
+    'ASK_ADD_SOURCE_CHAT_ID': "Please send the **ID, username, or invite link** of the source chat you want to **add** to this task.\n\nYou can send multiple chats, one per line. The task will use the 5 most recently added source chats.",
+    
     'ASK_SOURCE_CHAT_ID': "Please send the **ID, username, or invite link** of the chat from which to scrape members (e.g., `-1001234567890`, `my_channel`, or `t.me/joinchat/...`).\n\n"
                           "You can send **multiple source chats (up to 5), one per line**.",
     'ASK_TARGET_CHAT_ID': "Please send the **ID, username, or invite link** of the **single target chat** where members will be added.",
@@ -68,7 +72,7 @@ strings = {
     'TASK_NO_TARGET_SELECTED': "Please set the target chat first.",
     'TASK_NO_ACCOUNTS_ASSIGNED': "Please add at least one active account to your bot first.",
     'TASK_CREATED_SUCCESS': "✅ Adding task created successfully!",
-    'MANAGE_TASKS_HEADER': "⚙️ **Your Configured Adding Tasks**\n\n",
+    'MANAGE_TASKS_HEADER': "⚙️ **Your Configured Adding Tasks**\n\nClick on a task to manage it.",
     'TASK_ENTRY_INFO': "• Task {task_id} ({status})\n  Source: {source_chat_title}\n  Target: {target_chat_titles}\n  Accounts: {num_accounts} assigned",
     'TASK_STATUS_ACTIVE': "Active ▶️",
     'TASK_STATUS_PAUSED': "Paused ⏸️",
@@ -77,7 +81,7 @@ strings = {
 
     'SELECT_SOURCE_CHAT': "Select the chat from which to scrape members for Task {task_id}:",
     'SELECT_TARGET_CHAT': "Select the chat(s) where members will be added for Task {task_id}:",
-    'TASK_DETAILS_HEADER': "📝 **Task {task_id} Details**\n\nStatus: {status}\nSource(s):\n{source_chat_info}\n\nTarget:\n{target_chat_info}\n\nAssigned Accounts: {assigned_accounts_display}\nTotal Members Added: {total_added}",
+    'TASK_DETAILS_HEADER': "📝 **Task {task_id} Details**\n\nStatus: {status}\n\n**Source(s):**\n{source_chat_info}\n\n**Target:**\n{target_chat_info}\n\n**Assigned Accounts:** {assigned_accounts_display}\n**Total Members Added:** {total_added}",
     'TASK_STARTING': "Starting adding task {task_id}...",
     'TASK_PAUSING': "Pausing adding task {task_id}...",
     'TASK_STOPPING': "Stopping adding task {task_id}...",
