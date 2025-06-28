@@ -2,7 +2,6 @@ from telethon.tl.custom.button import Button
 import datetime
 import time
 from telethon.errors import UserNotParticipantError
-import random
 
 from config import config
 import utils
@@ -16,7 +15,7 @@ def set_bot_client(client):
     bot_client = client
 
 def yesno(c):
-    return [[Button.inline("Yes", f'yes_{c}')], [Button.inline("No", f'no_{c}')]]
+    return [[Button.inline("Yes", f'{{"action":"yes_{c}"}}')], [Button.inline("No", f'{{"action":"no_{c}"}}')]]
 
 async def check_fsub(e):
     if not config.FORCE_SUB_CHANNEL or e.sender_id == config.OWNER_ID:
@@ -54,22 +53,22 @@ async def send_main_menu(e):
 async def send_help_menu(e):
     try:
         await e.edit(strings['HELP_TEXT_FEATURES'],
-                           buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                           parse_mode='Markdown')
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='Markdown')
     except Exception:
         await e.respond(strings['HELP_TEXT_FEATURES'],
-                           buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                           parse_mode='Markdown')
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='Markdown')
 
 async def send_commands_menu(e):
     try:
         await e.edit(strings['COMMANDS_TEXT'],
-                           buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                           parse_mode='Markdown')
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='Markdown')
     except Exception:
         await e.respond(strings['COMMANDS_TEXT'],
-                           buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
-                           parse_mode='Markdown')
+                         buttons=[[Button.inline("« Back to Main", data='{"action":"main_menu"}')]],
+                         parse_mode='Markdown')
 
 async def send_settings_menu(e):
     text = strings['SETTINGS_MENU_TEXT']
@@ -215,24 +214,18 @@ async def send_create_adding_task_menu(e, uid):
         max_task_id = max(utils.get(task, 'task_id', 0) for task in existing_tasks)
         next_task_id = max_task_id + 1
 
-    # NEW: Automatically assign all active accounts to the new task
-    active_account_ids = [
-        acc.get('account_id') for acc in utils.get(owner_data, 'user_accounts', []) 
-        if acc.get('logged_in') and acc.get('account_id')
-    ]
-
     new_task = {
         "task_id": next_task_id,
         "is_active": False,
         "status": "draft",
         "source_chat_ids": [], # List of source chats (multiple allowed)
         "target_chat_id": None, # Single target chat
-        "assigned_accounts": active_account_ids, # MODIFIED: Auto-assigned
+        "assigned_accounts": [],
         "current_member_index": 0,
         "added_members_count": 0,
         "last_progress_message_id": None
     }
-    
+    # For now, we still push the draft. Cleanup happens in manage_tasks.
     db.update_user_data(uid, {"$push": {"adding_tasks": new_task}})
     
     await send_adding_task_details_menu(e, uid, next_task_id)
@@ -245,9 +238,9 @@ async def send_manage_adding_tasks_menu(e, uid):
     # CRITICAL FIX: Auto-remove empty draft tasks
     tasks_to_remove_ids = []
     for task in tasks:
-        if utils.get(task, 'status') == 'draft' and \
-           not utils.get(task, 'source_chat_ids') and \
-           not utils.get(task, 'target_chat_id'):
+        if not utils.get(task, 'source_chat_ids') and \
+           not utils.get(task, 'target_chat_id') and \
+           not utils.get(task, 'assigned_accounts'):
             tasks_to_remove_ids.append(utils.get(task, 'task_id'))
     
     if tasks_to_remove_ids:
@@ -337,7 +330,7 @@ async def send_adding_task_details_menu(e, uid, task_id):
         acc_info = db.find_user_account_in_owner_doc(uid, acc_id)
         if acc_info:
             assigned_accounts_info.append(f"`{utils.get(acc_info, 'phone_number', f'ID: {acc_id}')}`")
-    assigned_accounts_display = ", ".join(assigned_accounts_info) if assigned_accounts_info else "None (Auto-assigned on creation)"
+    assigned_accounts_display = ", ".join(assigned_accounts_info) if assigned_accounts_info else "None"
 
     total_added_members = utils.get(task, 'added_members_count', 0)
 
@@ -350,15 +343,15 @@ async def send_adding_task_details_menu(e, uid, task_id):
         total_added=total_added_members
     )
 
-    # MODIFIED: Removed "Assign Accounts" button and updated callbacks
     buttons = [
         [Button.inline("📤 Set Source Chat(s)", f'{{"action":"set_task_source_chat","task_id":{task_id}}}')],
         [Button.inline("📥 Set Target Chat", f'{{"action":"set_task_target_chat","task_id":{task_id}}}')],
+        [Button.inline("👥 Assign Accounts", f'{{"action":"assign_accounts_to_task","task_id":{task_id}}}')]
     ]
     
     if utils.get(task, 'status') == 'active':
         buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
-    elif utils.get(task, 'status') in ['paused', 'draft', 'completed']:
+    elif utils.get(task, 'status') == 'paused' or utils.get(task, 'status') == 'draft' or utils.get(task, 'status') == 'completed':
         # Only allow start if all required configurations are done
         if utils.get(task, 'source_chat_ids') and utils.get(task, 'target_chat_id') and utils.get(task, 'assigned_accounts'):
             buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
@@ -371,5 +364,43 @@ async def send_adding_task_details_menu(e, uid, task_id):
     except Exception:
         await e.respond(text, buttons=buttons, parse_mode='Markdown')
 
-# REMOVED: send_assign_accounts_menu is no longer needed.
-# REMOVED: send_chat_selection_menu is no longer needed as input is now direct.
+async def send_assign_accounts_menu(e, uid, task_id):
+    owner_data = db.get_user_data(uid)
+    all_accounts = utils.get(owner_data, 'user_accounts', [])
+    current_task = db.get_task_in_owner_doc(uid, task_id)
+
+    if not current_task: return await e.answer("Task not found.", alert=True)
+    if not all_accounts: return await e.answer(strings['NO_ACCOUNTS_FOR_ADDING'], alert=True)
+
+    assigned_account_ids = utils.get(current_task, 'assigned_accounts', [])
+
+    text = strings['CHOOSE_ACCOUNTS_FOR_TASK'].format(task_id=task_id)
+    buttons = []
+
+    for account in all_accounts:
+        acc_id = utils.get(account, 'account_id')
+        phone_number = utils.get(account, 'phone_number')
+        prefix = "✅ " if acc_id in assigned_account_ids else ""
+        buttons.append([Button.inline(f"{prefix}{phone_number} (ID: {acc_id})", f'm_add_assign_acc|{task_id}|{acc_id}')])
+    
+    buttons.append([Button.inline("Done ✅", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
+    buttons.append([Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')])
+
+    try:
+        await e.edit(text, buttons=buttons, parse_mode='Markdown')
+    except Exception:
+        await e.respond(text, buttons=buttons, parse_mode='Markdown')
+
+# send_chat_selection_menu is now modified to handle direct ID/username input.
+# It will no longer offer an interactive list of chats for selection.
+async def send_chat_selection_menu(e, uid, selection_type, task_id): # Removed page parameter
+    prompt_key = ""
+    if selection_type == 'from':
+        prompt_key = 'ASK_SOURCE_CHAT_ID'
+    elif selection_type == 'to':
+        prompt_key = 'ASK_TARGET_CHAT_ID'
+    
+    db.update_user_data(uid, {"$set": {"state": f"awaiting_chat_input_{selection_type}_{task_id}"}})
+    
+    # This now just sends a prompt. The input is handled by private_message_handler
+    await e.edit(strings[prompt_key], buttons=[[Button.inline("« Back", f'{{"action":"m_add_task_menu", "task_id":{task_id}}}')]], parse_mode='Markdown')
