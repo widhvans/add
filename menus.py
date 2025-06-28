@@ -315,15 +315,20 @@ async def send_adding_task_details_menu(e, uid, task_id):
     if source_chat_ids:
         source_titles = []
         for chat_id in source_chat_ids:
-            try: source_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
-            except: source_titles.append(f"ID: `{chat_id}`")
+            try:
+                # IMPORTANT: Use bot_client here, which is now correctly set
+                source_titles.append(await members_adder.get_chat_title(bot_client, chat_id))
+            except:
+                source_titles.append(f"ID: `{chat_id}`")
         source_chat_info_display = "\n".join(source_titles)
 
     target_chat_info_display = "Not Set"
     target_chat_id = utils.get(task, 'target_chat_id')
     if target_chat_id:
-        try: target_chat_info_display = await members_adder.get_chat_title(bot_client, target_chat_id)
-        except: target_chat_info_display = f"ID: `{target_chat_id}`"
+        try:
+            target_chat_info_display = await members_adder.get_chat_title(bot_client, target_chat_id)
+        except:
+            target_chat_info_display = f"ID: `{target_chat_id}`"
 
     assigned_accounts_info = []
     for acc_id in utils.get(task, 'assigned_accounts', []):
@@ -348,9 +353,13 @@ async def send_adding_task_details_menu(e, uid, task_id):
         [Button.inline("📥 Set Target Chat", data=f'm_add_set|to|{task_id}')]
     ]
     
-    if utils.get(task, 'status') == 'active':
+    # --- NEW/IMPROVED LOGIC for Start/Pause Buttons ---
+    task_status = utils.get(task, 'status')
+    if task_status == 'active':
+        # If the task is active, show a "Pause" button
         buttons.append([Button.inline("⏸️ Pause Task", f'{{"action":"pause_adding_task","task_id":{task_id}}}')])
-    elif utils.get(task, 'status') in ['paused', 'draft', 'completed']:
+    else: # Covers 'paused', 'draft', 'completed'
+        # Only allow starting if the task is fully configured
         if utils.get(task, 'source_chat_ids') and utils.get(task, 'target_chat_id') and utils.get(task, 'assigned_accounts'):
             buttons.append([Button.inline("▶️ Start Task", f'{{"action":"start_adding_task","task_id":{task_id}}}')])
     
